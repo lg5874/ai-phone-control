@@ -23,6 +23,12 @@ phone observe --scale 540      # screenshot too, downscaled
 Works on a stock phone with root (KernelSU / Magisk / `adb root`). No
 accessibility service, no Appium, no OCR, no cloud.
 
+**Any agent runtime** — a laptop agent over adb, an on-phone agent with a root
+shell, Shizuku without root, an MCP client, your own function-calling loop, or a
+chat box with a human in the loop: [docs/INTEGRATE.md](docs/INTEGRATE.md), and
+`adapters/` for the thin wrappers. Operit is one adapter among several, not a
+requirement.
+
 ---
 
 ## The one design decision
@@ -74,40 +80,60 @@ So the split is: **observation and input run on the Android side; parsing runs
 wherever you like.** The agent process is the bridge. `phone.py` is that
 bridge and it speaks either `adb shell` or a bare `su -c`.
 
-## Two shapes, one rule
+## One core, adapters that are optional
 
-| | shell half (this directory) | native half (`operit-package/`) |
+The core is the CLI plus `android/eyes.sh`. It does not know what an agent
+framework is: it starts, does one thing, prints text, and exits with a code
+that means something. That is the reason it works with a laptop agent, an
+on-phone agent, an MCP client, and a `while` loop you wrote yourself.
+
+Everything framework-specific lives in `adapters/` and is optional — including
+the Operit package, which sits among the other adapters rather than being sold
+as the second half of the project:
+
+| you have | use | read |
 |---|---|---|
-| needs | root on the phone, python3 on the host | Operit's accessibility bridge, no root |
-| drives the screen with | `uiautomator`, `input`, `screencap` | `Tools.UI.getPageInfo` / `tap` / `swipe` |
-| how a model uses it | CLI: `./phone ui`, `./phone tap-text "登录"` | 11 package tools: `screen`, `tap_text`, … |
-| install | `./phone install` | copy one `.js` into `packages/` |
+| a shell + adb (laptop, CI) | the CLI, `PHONE_TRANSPORT=adb` | `docs/INTEGRATE.md#1` |
+| a root shell on the phone | the CLI, `PHONE_TRANSPORT=exec` | `docs/INTEGRATE.md#2` |
+| Shizuku, no root | the CLI, `PHONE_EXEC='rish -c'` | `docs/INTEGRATE.md#3` |
+| an MCP client (Claude Desktop, Cline, Cherry Studio, Cursor) | `adapters/mcp/phone_mcp.py` | `adapters/mcp/README.md` |
+| your own function-calling loop | `adapters/openai-tools.json` | `docs/INTEGRATE.md#4` |
+| a vendor AI app with only its own UI bridge | a native package for that platform | `adapters/README.md` |
+| a chat box and nothing else | a human runs the commands | `adapters/prompt-only.md` |
 
-Both report whether the screen actually changed (`changed`, a fingerprint of
-package + activity + node count) instead of claiming the action worked. Use the
-shell half for any agent that can run commands; use the native half when there
-is no shell, no root, only Operit.
+The rule for new adapters: under ~300 lines, no re-implementation of the
+actions, and the core's exit codes. A second implementation is only acceptable
+on a platform with no shell at all — the Operit package is that case
+(`Tools.UI` instead of `uiautomator`). Both shapes still report whether the
+screen actually changed (`changed`, a fingerprint of package + activity + node
+count) instead of claiming the action worked.
 
-`SKILL.md` is the shell half written as an agent skill: drop the directory into
-a skills folder and the model reads when to use it, how to call it, and what
-exit codes 1 and 2 mean.
+`SKILL.md` is the core written as an agent skill: drop the directory into a
+skills folder and the model reads when to use it, how to call it, and what exit
+codes 1 and 2 mean.
 
 ## Layout
 
 ```
-android/eyes.sh     the device half. toybox sh only. 143 lines.
-host/phone.py       the agent half. transport + gestures. subcommand CLI.
-host/ui.py          uiautomator XML -> one line per actionable node.
-examples/agent.py   the smallest loop that actually finishes a task.
-tests/test_ui.py    11 device-free tests for the parser.
-tests/test_phone_emit.py  11 device-free tests for the emit transport.
-SKILL.md            the same tool as an agent skill: when, how, exit codes.
-phone               wrapper so `./phone ui` in these docs is literal.
-operit-package/     the native half: 11 tools on Operit's UI bridge, no root.
-docs/NOTES.md       what I measured, including the roads that dead-ended.
-docs/TRANSPORT.md   the three transports and when to use each.
-docs/PUBLISH.md     description, topics, push commands.
-CHANGELOG.md        what each version contains.
+android/eyes.sh            the device half. toybox sh only. 143 lines.
+host/phone.py              the agent half. transport + gestures. subcommand CLI.
+host/ui.py                 uiautomator XML -> one line per actionable node.
+examples/agent.py          the smallest loop that actually finishes a task.
+tests/test_ui.py           11 device-free tests for the parser.
+tests/test_phone_emit.py   11 device-free tests for the emit transport.
+tests/test_mcp.py          13 device-free tests for the MCP adapter.
+SKILL.md                   the core as an agent skill: when, how, exit codes.
+phone                      wrapper so `./phone ui` in these docs is literal.
+docs/INTEGRATE.md          five ways in, per agent runtime, plus symptom tables.
+docs/NOTES.md              what I measured, including the roads that dead-ended.
+docs/TRANSPORT.md          the three transports and when to use each.
+docs/PUBLISH.md            description, topics, push commands.
+adapters/README.md         which adapter for which agent framework.
+adapters/mcp/              MCP server (stdlib, 11 tools) + client configs.
+adapters/openai-tools.json function-calling schemas, generated from the MCP table.
+adapters/prompt-only.md    the human-as-transport workflow, with a system prompt.
+adapters/operit/           native package for Operit's UI bridge, no root (optional).
+CHANGELOG.md               what each version contains.
 ```
 
 `eyes.sh` uses only what every Android ships: `screencap`, `uiautomator`,

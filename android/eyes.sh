@@ -116,6 +116,76 @@ case "$cmd" in
     wm density | sed 's/^/density: /'
     ;;
 
+  human)
+    # Is a REAL finger on the screen right now?
+    #
+    # `input tap` injects events *below* the input device layer, so injected
+    # taps never appear in /dev/input/event*. That is the whole trick: this
+    # probe hears humans only, and therefore an agent can yield to them.
+    #
+    # Only touch panels are watched -- a sensor or an AOD node that reports
+    # periodically would otherwise look like a person.
+    win=${1:-2}
+    evs=""
+    for d in /dev/input/event*; do
+      [ -e "$d" ] || continue
+      if getevent -pl "$d" 2>/dev/null | grep -q 'ABS_MT_POSITION_X'; then
+        evs="$evs $d"
+      fi
+    done
+    if [ -z "$evs" ]; then
+      echo "human: unknown"
+      echo "reason: no readable touch device (need root on /dev/input)"
+      exit 0
+    fi
+    # A finger announces itself: BTN_TOUCH DOWN (0x14a) plus a fresh
+    # ABS_MT_TRACKING_ID (0x39). Taking the *first event on the device* was
+    # wrong in both directions, measured on a vivo_ts panel: a lift
+    # (TRACKING_ID ffffffff) and a stray SYN_REPORT both counted as a human.
+    # Only a press counts.
+    #
+    # shellcheck disable=SC2086
+    press=$(timeout "$win" getevent -q $evs 2>/dev/null \
+            | grep -Ei '0001[[:space:]]+014a[[:space:]]+00000001|0003[[:space:]]+0039|btn_touch[[:space:]]+down|abs_mt_tracking_id' \
+            | grep -Eiv 'ffffffff|tracking_id[[:space:]]+-1' \
+            | head -1)
+    if [ -n "$press" ]; then
+      echo "human: yes"
+    else
+      echo "human: no"
+    fi
+    ;;
+
+  state)
+    # One call, three facts an agent must not guess: is the screen awake, is
+    # the keyguard up, what is in front.
+    wake=$(dumpsys power 2>/dev/null | grep -m1 -oE 'mWakefulness=[A-Za-z]+' \
+           | cut -d= -f2)
+    kg=$(dumpsys window 2>/dev/null \
+         | grep -m1 -oE 'mDreamingLockscreen=(true|false)')
+    top=$(dumpsys activity activities 2>/dev/null \
+          | grep -m1 'topResumedActivity' | sed 's/.*topResumedActivity=//')
+    echo "wake=${wake:-unknown}"
+    echo "keyguard=${kg:-unknown}"
+    echo "top=${top:-unknown}"
+    ;;
+
+  pkg)
+    # Business-level truth: is the app actually installed, and which build.
+    # "the screen changed" is not the same as "the app is on the phone".
+    n=${1:-}
+    [ -n "$n" ] || { echo "pkg needs a package name" >&2; exit 2; }
+    p=$(pm path "$n" 2>/dev/null | head -1 | sed 's/^package://')
+    if [ -z "$p" ]; then
+      echo "installed: no"
+      exit 1
+    fi
+    echo "installed: yes"
+    echo "path: $p"
+    dumpsys package "$n" 2>/dev/null | grep -m1 'versionName=' | tr -d ' '
+    dumpsys package "$n" 2>/dev/null | grep -m1 'firstInstallTime=' | tr -d ' '
+    ;;
+
   observe)
     d=${1:-$OUT}
     mkdir -p "$d" 2>/dev/null

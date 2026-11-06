@@ -50,6 +50,28 @@ EXEC_WRAP = os.environ.get("PHONE_EXEC", "su -c")
 # caller (an agent with its own shell tool) run it, then call us again.
 EMIT = os.environ.get("PHONE_EMIT") == "1"
 
+# An inherited PHONE_EMIT=1 silently turns a working adb/exec setup into a
+# printer: the tool emits `DEVICE_CMD: ...` and exits 0, and an agent that only
+# reads exit codes concludes the phone did the thing. Measured, not imagined --
+# a leftover export from an earlier shell cost a whole debugging round. Say it
+# once, on stderr, where logs keep it.
+if EMIT and (os.environ.get("PHONE_TRANSPORT")
+             or os.environ.get("PHONE_EXEC")
+             or os.environ.get("PHONE_SERIAL")):
+    print("warning: PHONE_EMIT=1 overrides PHONE_TRANSPORT/PHONE_EXEC; this "
+          "process prints DEVICE_CMD instead of running it", file=sys.stderr)
+
+# Exit codes are the only contract an agent can key on without reading prose.
+# 1 and 2 already existed; 3-6 exist because "the tap did nothing" and "you
+# were looking at the wrong app" were indistinguishable from "all good".
+EXIT_OK = 0
+EXIT_NOT_FOUND = 1
+EXIT_STALE = 2
+EXIT_WRONG_APP = 3
+EXIT_HUMAN_BUSY = 4
+EXIT_AMBIGUOUS = 5
+EXIT_SCREEN_OFF = 6
+
 
 # --------------------------------------------------------------- transports
 def sh(cmd: str, timeout: int = 60) -> str:
@@ -136,6 +158,98 @@ def warn_stale(path: Path, max_age: float) -> None:
         print(f"# warning: {path} is {age:.0f}s old; "
               f"refresh with: sh {REMOTE_DIR}/eyes.sh dump {path}",
               file=sys.stderr)
+
+
+# ------------------------------------------------------------ safety gates
+def state_probe() -> dict:
+    """wake / keyguard / foreground in one device round trip."""
+    out = sh_ok(f"sh {REMOTE_DIR}/eyes.sh state")
+    facts = {}
+    for line in out.splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            facts[key.strip()] = value.strip()
+    return facts
+
+
+def human_now(window: float = 1.0) -> bool:
+    """True if a real finger touched the panel within `window` seconds.
+
+    `input tap` injects below the input layer, so injected taps are invisible
+    to this probe by construction. What it hears is the human.
+    """
+    out = sh_ok(f"sh {REMOTE_DIR}/eyes.sh human {max(1, int(round(window)))}")
+    return "human: yes" in out
+
+
+def gate(a) -> int:
+    """Pre-flight: awake? right app? human not on the glass?
+
+    Returns EXIT_OK when clear to act. Every action command calls this first;
+    that ordering is the point -- v1.1 acted first and explained afterwards.
+    """
+    if getattr(a, "force", False):
+        return EXIT_OK
+    facts = state_probe()
+    wake = facts.get("wake", "")
+    if wake and wake not in ("Awake", "unknown"):
+        print(f"SCREEN_OFF: wakefulness={wake}; wake it first "
+              f"(`phone key wakeup`, then `phone swipe up` if locked)",
+              file=sys.stderr)
+        return EXIT_SCREEN_OFF
+    expect = (getattr(a, "expect", "") or "").strip()
+    front = facts.get("top", "")
+    if expect and expect.lower() not in front.lower():
+        print(f"WRONG_APP: expected {expect!r}, foreground is "
+              f"{front or 'unknown'!r} -- nothing was done", file=sys.stderr)
+        return EXIT_WRONG_APP
+    window = getattr(a, "window", 1.0)
+    if window and human_now(window):
+        print(f"HUMAN_BUSY: a real finger touched the screen within "
+              f"{window:g}s -- standing down, the human goes first",
+              file=sys.stderr)
+        return EXIT_HUMAN_BUSY
+    return EXIT_OK
+
+
+def add_safety(p, touch: bool = True):
+    """Attach the pre-flight flags to an action subcommand."""
+    p.add_argument("--expect", default="",
+                   help="refuse (exit 3) unless this package is in front")
+    if touch:
+        p.add_argument("--window", type=float, default=1.0,
+                       help="seconds to listen for a human finger; 0 = skip")
+    p.add_argument("--force", action="store_true",
+                   help="skip every pre-flight gate")
+    return p
+
+
+def group_hits(hits, tol: int = 12):
+    """Collapse hits that share a centre -- one target, several nodes."""
+    groups = []
+    for n in hits:
+        x, y = n["center"]
+        for g in groups:
+            if abs(x - g["x"]) <= tol and abs(y - g["y"]) <= tol:
+                g["nodes"].append(n)
+                break
+        else:
+            groups.append({"x": x, "y": y, "nodes": [n]})
+    return groups
+
+
+def pick_target(groups, pick: str):
+    """Choose one of several same-label targets when the caller insisted."""
+    clickable = [g for g in groups if g["nodes"][0]["clickable"]]
+    cands = clickable or groups
+    if pick == "bottom":
+        return max(cands, key=lambda g: g["y"])
+    if pick == "top":
+        return min(cands, key=lambda g: g["y"])
+    if pick == "largest":
+        return max(cands, key=lambda g: g["nodes"][0]["size"][0] *
+                   g["nodes"][0]["size"][1])
+    return cands[0]
 
 
 def screen_wh() -> tuple[int, int]:

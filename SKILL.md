@@ -79,6 +79,9 @@ physical pixels of the real screen — pass them straight back to `tap`.
 | 0 | the thing happened, or the observation was returned |
 | 1 | target not found — the label is not on this screen, nothing was tapped |
 | 2 | refused: the view is stale, or the device produced no artifact |
+| 3 | wrong app — `--expect` did not match the foreground package, nothing was done |
+| 4 | a real finger is on the screen (`HUMAN_BUSY`); the human goes first |
+| 6 | screen off or locked — wake it before acting |
 
 ## Rules
 
@@ -93,6 +96,10 @@ physical pixels of the real screen — pass them straight back to `tap`.
    tapping when you were told the view is old.
 4. **Prefer `tap-text` over `tap`.** Labels survive resolution and layout
    changes; pixels do not.
+5. **A human outranks the agent.** A real finger on the glass makes an action
+   return exit 4 and do nothing. That is the intended behaviour, not a bug:
+   wait, or hand the task back. `--force` exists for the case where you are
+   certain the finger is gone and the screen is yours.
 
 ## Recipes
 
@@ -122,9 +129,14 @@ done
 ./phone shot --scale 540         # then read the image
 ```
 
-## The other shape
+## Other agent runtimes
 
-If you are inside Operit (accessibility bridge available, no root needed), use
-the native package in `operit-package/`: the same eleven actions, implemented on
-`Tools.UI` instead of shell. Both shapes obey the same rule — an action must be
-verified, never assumed.
+This file is the core. If your runtime is not a shell — an MCP client, a vendor
+app with its own UI bridge, a chat box — the adapters live in `adapters/`:
+`adapters/mcp/` (stdio MCP, 11 tools), `adapters/openai-tools.json` (function
+calling schemas), `adapters/prompt-only.md` (the human is the transport), and
+`adapters/operit/` (native package on Operit's `Tools.UI`, no root, for a phone
+with no shell at all).
+
+Five ways in, one per runtime, with a symptom→layer table: `docs/INTEGRATE.md`.
+Every shape obeys the same rule — an action must be verified, never assumed.

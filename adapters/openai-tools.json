@@ -1,0 +1,231 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "phone_ui",
+      "description": "READ the phone screen as text: one line per actionable node, `flags (x,y) label #id`. This is the cheapest observation (~2 s) and the one to use in a loop. Call it before an action to find the target and after it to prove the screen changed. exit 1 = the label is not on this screen; exit 2 = the view is stale and you must refresh first (in emit mode the output carries the DEVICE_CMD).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "max_age": {
+            "type": "number",
+            "description": "emit mode: reuse a dump newer than this many seconds (default 30)"
+          },
+          "strict": {
+            "type": "boolean",
+            "description": "emit mode: exit 2 instead of warning when the dump is stale"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "phone_tap_text",
+      "description": "Tap a visible label (text or content-desc). Prefer this over coordinates: labels survive resolution and layout changes. Reports where it tapped; exit 1 with `no node matching` means nothing was tapped. Success is not evidence -- call phone_ui afterwards.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "label to tap"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "phone_tap_xy",
+      "description": "Tap absolute physical pixels. Use coordinates from phone_ui / phone_observe, never from a downscaled screenshot.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "phone_long_press",
+      "description": "Long press at absolute pixels (default 600 ms).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "ms": {
+            "type": "integer",
+            "description": "hold duration, default 600"
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "phone_swipe",
+      "description": "Swipe. Either a preset (up/down/left/right, scaled from the real screen size) or explicit pixels X1 Y1 X2 Y2 [MS]. Presets survive a change of phone; explicit numbers do not.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "gesture": {
+            "type": "string",
+            "enum": [
+              "up",
+              "down",
+              "left",
+              "right"
+            ]
+          },
+          "x1": {
+            "type": "integer"
+          },
+          "y1": {
+            "type": "integer"
+          },
+          "x2": {
+            "type": "integer"
+          },
+          "y2": {
+            "type": "integer"
+          },
+          "ms": {
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "phone_press_key",
+      "description": "Press a key by name: back, home, enter, recents, power, volume_up, delete, tab, escape, or any KEYCODE_* name.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "phone_type",
+      "description": "Type into the focused field. ASCII only: Android's `input text` injects key events, so CJK is silently dropped while the command still exits 0. For Chinese, paste through the clipboard and confirm with phone_ui. Spaces are escaped for you.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "phone_screenshot",
+      "description": "Screenshot to a file and return its path and size. Use only when text is not enough: a canvas, a video, a game, a WebView with no tree. Downscale to keep the pixels small.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scale": {
+            "type": "integer",
+            "description": "downscale width in px, 0 = physical"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "phone_observe",
+      "description": "One call that returns screenshot path AND the UI tree. The widest observation; costs the most.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scale": {
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "phone_foreground",
+      "description": "Which app/activity is in front. Cheaper than a full tree and the fastest way to confirm a tap opened something. A UI signal, not a proof of progress.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "phone_size",
+      "description": "Screen geometry (physical pixels). Needed only when you compute coordinates yourself.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    }
+  }
+]

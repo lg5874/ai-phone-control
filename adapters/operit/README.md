@@ -5,7 +5,7 @@ it drives the screen through Operit's own `Tools.UI` bridge, so it works on a
 phone where the shell route in the parent directory is not available.
 
 ```
-operit-package/com.operit.phone_control.js      the whole package
+adapters/operit/com.operit.phone_control.js   the whole package
 ```
 
 ## Install
