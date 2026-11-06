@@ -1,6 +1,6 @@
 ---
 name: phone-control
-description: Read and drive a real Android phone screen - UI tree as text with real coordinates, tap by visible label, swipe, press keys, type, screenshot. Use when a task needs the phone screen changed or verified (open an app, find and press a button, scroll a list, fill an input), when adb or an accessibility service is unavailable, or when the agent itself runs on the phone with root.
+description: Read and drive a real Android phone screen - UI tree as text with real coordinates, tap by visible label, swipe, press keys, type, screenshot, and report whether the screen actually changed. Use when a task needs the phone screen read, changed or verified (open an app, find and press a button, scroll a list, fill an input), when adb or an accessibility service is unavailable, or when the agent itself runs on the phone with root. 触发词：看屏幕、看下屏幕、屏幕上有什么、读屏、点一下、点按钮、点XX、帮我点、滑动、滚动、返回键、截图、界面、UI、无障碍、手机操作、打开APP、输入文字、填表、在手机上做。
 ---
 
 # phone-control
