@@ -64,6 +64,24 @@ must run it with its own tool. It is the honest fallback when there is no
 channel, not a mode to leave switched on — an inherited export is warned about
 on stderr and in the tool output.
 
+## Tool selection
+
+Give a small agent eleven tools and it will sometimes pick the most expensive
+one. Env vars trim the list (Windows-MCP style):
+
+| env | effect |
+|---|---|
+| `PHONE_TOOLS=phone_ui,phone_tap_text` | whitelist; the final say |
+| `PHONE_EXCLUDE_TOOLS=phone_screenshot` | blacklist; only used when no whitelist |
+
+Unknown names fail fast at startup with the valid list on stderr. `tools/list`
+is filtered; a direct `tools/call` to a hidden tool still works, so a client
+that cached the old list does not break silently. The server log line reports
+what took effect: `phone_mcp 1.2.0: transport=adb cli=… tools=2/11`.
+
+A good minimal set for a chat-box agent:
+`PHONE_TOOLS=phone_ui,phone_tap_text,phone_swipe,phone_press_key,phone_type,phone_foreground`.
+
 ## Verify the wiring before you blame the phone
 
 ```bash
@@ -73,9 +91,11 @@ printf '%s\n' \
 | python3 adapters/mcp/phone_mcp.py
 ```
 
-Expect two JSON lines, the second listing eleven tools. If the client shows no
+Expect two JSON lines, the second listing eleven tools (fewer if you set
+`PHONE_TOOLS` / `PHONE_EXCLUDE_TOOLS`). If the client shows no
 tools, check its server log: the first stderr line says
-`phone_mcp 1.2.0: transport=adb cli=/…/host/phone.py` — that line is the answer
+`phone_mcp 1.2.0: transport=adb cli=/…/host/phone.py tools=11/11` — that line is
+the answer
 to "why did nothing happen". Then, from a normal shell, make sure the CLI itself
 works:
 

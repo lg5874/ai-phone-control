@@ -193,6 +193,58 @@ class McpAdapter(unittest.TestCase):
         self.assertTrue(result["isError"])
         self.assertIn("[exit 2]", result["content"][0]["text"])
 
+    # -- tool selection (PHONE_TOOLS / PHONE_EXCLUDE_TOOLS) ------------------
+    def test_whitelist_shrinks_tools_list(self):
+        env = {**self.env, "PHONE_TOOLS": "phone_ui,phone_tap_text"}
+        client = Client(env)
+        try:
+            tools = client.rpc("tools/list")["result"]["tools"]
+            self.assertEqual([t["name"] for t in tools],
+                             ["phone_ui", "phone_tap_text"])
+        finally:
+            client.close()
+
+    def test_exclude_list_removes_tools(self):
+        env = {**self.env, "PHONE_EXCLUDE_TOOLS": "phone_screenshot,phone_observe"}
+        client = Client(env)
+        try:
+            names = {t["name"] for t in client.rpc("tools/list")["result"]["tools"]}
+            self.assertEqual(len(names), 9)
+            self.assertNotIn("phone_screenshot", names)
+            self.assertNotIn("phone_observe", names)
+        finally:
+            client.close()
+
+    def test_whitelist_wins_over_exclude(self):
+        env = {**self.env, "PHONE_TOOLS": "phone_ui",
+               "PHONE_EXCLUDE_TOOLS": "phone_ui"}
+        client = Client(env)
+        try:
+            tools = client.rpc("tools/list")["result"]["tools"]
+            self.assertEqual([t["name"] for t in tools], ["phone_ui"])
+        finally:
+            client.close()
+
+    def test_call_to_excluded_tool_still_works_contract_wise(self):
+        # tools/list is filtered; a direct tools/call to a hidden tool stays
+        # functional so clients that cached the list do not break silently.
+        env = {**self.env, "PHONE_EXCLUDE_TOOLS": "phone_type"}
+        client = Client(env)
+        try:
+            text = client.text("phone_type", {"text": "hi"})
+            self.assertEqual(self.argv_seen(), ["type", "hi"])
+            self.assertTrue(text.rstrip().endswith("[exit 0]"))
+        finally:
+            client.close()
+
+    def test_unknown_whitelist_name_fails_fast(self):
+        env = {**self.env, "PHONE_TOOLS": "no_such_tool"}
+        proc = subprocess.run([sys.executable, str(SERVER)],
+                              input="", capture_output=True, text=True,
+                              env=env, timeout=15)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("names unknown tools", proc.stderr)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

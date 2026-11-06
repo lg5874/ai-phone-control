@@ -215,9 +215,32 @@ TOOLS = [
 
 BY_NAME = {t["name"]: t for t in TOOLS}
 
+# Tool selection, Windows-MCP style: PHONE_TOOLS whitelists, PHONE_EXCLUDE_TOOLS
+# blocks. Both take comma-separated tool names; PHONE_TOOLS is the final say
+# when both are set. A slimmed list keeps small agents from picking the wrong
+# (most expensive) tool.
+def _names_from_env(var: str) -> set[str] | None:
+    raw = os.environ.get(var, "").strip()
+    if not raw:
+        return None
+    names = {n.strip() for n in raw.split(",") if n.strip()}
+    unknown = names - BY_NAME.keys()
+    if unknown:
+        raise SystemExit(f"{var} names unknown tools: {', '.join(sorted(unknown))}"
+                         f" (valid: {', '.join(sorted(BY_NAME))})")
+    return names
 
 def public(t: dict) -> dict:
     return {k: v for k, v in t.items() if k != "build"}
+
+def effective_tools() -> list[dict]:
+    # PHONE_TOOLS is the final say when set; only when it is absent does
+    # PHONE_EXCLUDE_TOOLS subtract from the full set.
+    allow = _names_from_env("PHONE_TOOLS")
+    if allow is not None:
+        return [t for t in TOOLS if t["name"] in allow]
+    deny = _names_from_env("PHONE_EXCLUDE_TOOLS") or set()
+    return [t for t in TOOLS if t["name"] not in deny]
 
 
 def call(name: str, args: dict) -> tuple[int, str]:
@@ -243,7 +266,8 @@ def main() -> int:
     # explains a silent no-op there: which transport this process will use.
     mode = ("emit" if os.environ.get("PHONE_EMIT") == "1"
             else os.environ.get("PHONE_TRANSPORT", "adb"))
-    print(f"phone_mcp {VERSION}: transport={mode} cli={CLI}", file=sys.stderr)
+    print(f"phone_mcp {VERSION}: transport={mode} cli={CLI}"
+          f" tools={len(effective_tools())}/{len(TOOLS)}", file=sys.stderr)
     sys.stderr.flush()
     for line in sys.stdin:
         line = line.strip()
@@ -270,7 +294,7 @@ def main() -> int:
             continue
         elif method == "tools/list":
             send({"jsonrpc": "2.0", "id": mid,
-                  "result": {"tools": [public(t) for t in TOOLS]}})
+                  "result": {"tools": [public(t) for t in effective_tools()]}})
         elif method == "tools/call":
             params = msg.get("params") or {}
             name = params.get("name")
