@@ -1,13 +1,20 @@
 # ai-phone-control
 
-> 让 AI 直接看你的手机屏幕并操作它。不用投屏、不用 Appium、不用 OCR，
-> 一条命令看一次，看一眼就退。支持 KernelSU / Magisk / `adb root`。
+> 给 AI agent 一双眼睛和一双手：把安卓屏幕读成**带坐标的文本**，按**看得见的文字**点按，
+> 每个动作都**如实回报屏幕到底变没变**（不谎报成功）。一条命令一次，不留守护进程；
+> 不用投屏、不用 Appium、不用 OCR、不开无障碍服务、不联网。
+>
+> 任何 runtime 都能接：笔记本上的 agent 走 adb、手机上的 root shell 直接跑、
+> Shizuku 无 root、MCP 客户端、你自己的 function calling 循环，或者只有聊天框。
 >
 > **中文关键词**：AI 控制手机 · AI 操控安卓 · 让大模型操作手机 · 手机自动化
-> 智能体 · 屏幕识别 · 无投屏 · 无障碍免安装 · 单次命令 · 无守护进程
+> 智能体 · 屏幕识别 · 按文字点击 · 动作校验 · 无投屏 · 无障碍免安装 · 单次命令 · 无守护进程
 
-Give an LLM agent eyes and hands on an Android phone. Two small files, no
-dependencies, nothing left running.
+Give an LLM agent eyes and hands on an Android phone: the screen as text with
+coordinates, taps by visible label, and an honest report on whether the screen
+actually changed. One process per action, nothing left running. Reaches the
+device over adb, an on-phone root shell, or Shizuku; plugs into any runtime —
+MCP, function calling, a chat box with a human in the loop.
 
 [![release](https://img.shields.io/github/v/release/lg5874/ai-phone-control?label=release)](https://github.com/lg5874/ai-phone-control/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -23,11 +30,8 @@ phone observe --scale 540      # screenshot too, downscaled
 Works on a stock phone with root (KernelSU / Magisk / `adb root`). No
 accessibility service, no Appium, no OCR, no cloud.
 
-**Any agent runtime** — a laptop agent over adb, an on-phone agent with a root
-shell, Shizuku without root, an MCP client, your own function-calling loop, or a
-chat box with a human in the loop: [docs/INTEGRATE.md](docs/INTEGRATE.md), and
-`adapters/` for the thin wrappers. Operit is one adapter among several, not a
-requirement.
+Five ways in, each with a 30-second check: [docs/INTEGRATE.md](docs/INTEGRATE.md).
+`adapters/` holds the thin wrappers — Operit is one of them, not a requirement.
 
 ---
 
