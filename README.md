@@ -74,9 +74,14 @@ bridge and it speaks either `adb shell` or a bare `su -c`.
 ## Layout
 
 ```
-android/eyes.sh     the device half. toybox sh only. 130 lines.
+android/eyes.sh     the device half. toybox sh only. 139 lines.
 host/phone.py       the agent half. transport + gestures. subcommand CLI.
 host/ui.py          uiautomator XML -> one line per actionable node.
+examples/agent.py   the smallest loop that actually finishes a task.
+tests/test_ui.py    11 device-free tests.
+docs/NOTES.md       what I measured, including the roads that dead-ended.
+docs/TRANSPORT.md   the three transports and when to use each.
+docs/PUBLISH.md     description, topics, push commands.
 ```
 
 `eyes.sh` uses only what every Android ships: `screencap`, `uiautomator`,
