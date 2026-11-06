@@ -55,7 +55,8 @@ EMIT = os.environ.get("PHONE_EMIT") == "1"
 def sh(cmd: str, timeout: int = 60) -> str:
     """Run one command on the device. Returns stdout, raises on failure."""
     if EMIT:
-        # The caller executes this and feeds the output back via --ingest.
+        # The caller runs this itself. Whatever it produces lands in
+        # $REMOTE_DIR, which we then read in place (see view()).
         print(f"DEVICE_CMD: {cmd}")
         return ""
 
@@ -108,6 +109,45 @@ def pull(remote: str, local: Path) -> Path:
     return local
 
 
+def view(remote_name: str) -> Path:
+    """Local path to an artifact the device produced.
+
+    adb: pull it into WORK. emit: the agent and the device share $REMOTE_DIR,
+    so the file is readable in place -- and a fake pull that writes nothing is
+    worse than no pull at all, so we fail loudly when the device has not
+    produced it yet.
+    """
+    remote = f"{REMOTE_DIR}/{remote_name}"
+    if EMIT:
+        if not Path(remote).exists():
+            raise SystemExit(
+                f"device has not produced {remote} yet "
+                f"-- run the DEVICE_CMD above, then re-run this command")
+        return Path(remote)
+    return pull(remote, WORK / remote_name)
+
+
+def warn_stale(path: Path, max_age: float) -> None:
+    """emit: say out loud how old the view is instead of implying it is live."""
+    if not path.exists():
+        return
+    age = time.time() - path.stat().st_mtime
+    if age > max_age:
+        print(f"# warning: {path} is {age:.0f}s old; "
+              f"refresh with: sh {REMOTE_DIR}/eyes.sh dump {path}",
+              file=sys.stderr)
+
+
+def screen_wh() -> tuple[int, int]:
+    """Preset gesture geometry. Override with PHONE_SIZE=WxH, no probing."""
+    raw = os.environ.get("PHONE_SIZE", "1260x2800")
+    try:
+        w, _, h = raw.partition("x")
+        return int(w), int(h)
+    except ValueError:
+        return 1260, 2800
+
+
 def scale_image(src: Path, width: int, quality: int = 5) -> Path:
     """Downscale with ffmpeg if available, else return the original."""
     if not width:
@@ -139,16 +179,25 @@ def cmd_size(a):
 
 
 def cmd_top(a):
+    if EMIT:
+        # A printed command is not a fact. Read the probe observe wrote, and ask
+        # for one when it is missing or stale instead of echoing the command
+        # and letting the caller believe it saw the foreground app.
+        p = Path(f"{REMOTE_DIR}/top.txt")
+        if not fresh(p, 30.0):
+            sh(f"sh {REMOTE_DIR}/eyes.sh top > {p}")
+            print("# run the DEVICE_CMD above, then re-run: phone top",
+                  file=sys.stderr)
+            return 2
+        print(p.read_text(encoding="utf-8").strip())
+        return 0
     print(eyes("top").strip())
     return 0
 
 
 def cmd_shot(a):
-    remote = f"{REMOTE_DIR}/shot.png"
-    eyes("shot", remote)
-    local = pull(remote, WORK / "shot.png")
-    if EMIT:
-        return 0
+    eyes("shot", f"{REMOTE_DIR}/shot.png")
+    local = view("shot.png")
     if a.scale:
         local = scale_image(local, a.scale)
     print(f"{local} {local.stat().st_size} B")
@@ -156,11 +205,8 @@ def cmd_shot(a):
 
 
 def cmd_dump(a):
-    remote = f"{REMOTE_DIR}/ui.xml"
-    eyes("dump", remote)
-    local = pull(remote, WORK / "ui.xml")
-    if EMIT:
-        return 0
+    eyes("dump", f"{REMOTE_DIR}/ui.xml")
+    local = view("ui.xml")
     if a.raw:
         print(local.read_text(encoding="utf-8", errors="replace"))
         return 0
@@ -182,20 +228,27 @@ def fresh(path: Path, max_age: float = 30.0) -> bool:
 def cmd_ui(a):
     """Text-only observation: cheapest way to see what is on screen.
 
-    In emit mode we cannot run anything, but $REMOTE_DIR is on shared storage
-    (/sdcard), which this process can read. So we parse whatever is there. If
-    the file is missing we say so and print the command that would refresh it.
+    emit mode: the agent runs the DEVICE_CMD we print, then calls us again.
+    $REMOTE_DIR is shared storage, so we parse it in place. A stale tree is
+    flagged loudly here, and with --strict it is an error -- an agent that
+    treats a five-minute-old tree as ground truth taps the wrong thing and
+    then reports success, which is the failure mode this whole file exists
+    to avoid.
     """
     if EMIT:
         shared = Path(f"{REMOTE_DIR}/ui.xml")
-        if not shared.exists():
-            eyes("dump", f"{REMOTE_DIR}/ui.xml")
-            print("# then re-run: phone ui", file=sys.stderr)
-            return 0
+        # A fresh tree is the whole point of this subcommand: print nothing but
+        # the tree. Only ask the agent to run something when we must refresh.
         if not fresh(shared, a.max_age):
-            print(f"# warning: {shared} is "
-                  f"{time.time() - shared.stat().st_mtime:.0f}s old",
-                  file=sys.stderr)
+            eyes("dump", f"{REMOTE_DIR}/ui.xml")
+            if a.strict:
+                print(f"# stale: {shared} is "
+                      f"{time.time() - shared.stat().st_mtime:.0f}s old "
+                      f"(> {a.max_age:.0f}s); run the DEVICE_CMD above, "
+                      f"then re-run", file=sys.stderr)
+                return 2
+            shared = view("ui.xml")  # missing tree -> one clean error, no trace
+            warn_stale(shared, a.max_age)
         r = subprocess.run([sys.executable, str(UI_PY), "parse", str(shared)],
                            capture_output=True, text=True)
         sys.stdout.write(r.stdout)
@@ -207,13 +260,16 @@ def cmd_ui(a):
 
 
 def cmd_observe(a):
-    remote_png = f"{REMOTE_DIR}/shot.png"
-    remote_xml = f"{REMOTE_DIR}/ui.xml"
     print(eyes("observe", REMOTE_DIR).strip())
-    png = pull(remote_png, WORK / "shot.png")
-    xml = pull(remote_xml, WORK / "ui.xml")
+    png = view("shot.png")
+    xml = view("ui.xml")
     if EMIT:
-        return 0
+        warn_stale(png, 30.0)
+        warn_stale(xml, 30.0)
+        t = Path(f"{REMOTE_DIR}/top.txt")
+        if t.exists():
+            print(f"\n--- foreground: "
+                  f"{t.read_text(encoding='utf-8').strip()}")
     if a.scale:
         png = scale_image(png, a.scale)
     print(f"\n--- screenshot: {png} ({png.stat().st_size} B)")
@@ -230,11 +286,19 @@ def cmd_tap(a):
 
 
 def cmd_tap_text(a):
-    remote = f"{REMOTE_DIR}/ui.xml"
-    eyes("dump", remote)
-    local = pull(remote, WORK / "ui.xml")
+    remote_xml = f"{REMOTE_DIR}/ui.xml"
     if EMIT:
-        return 0
+        # Tapping yesterday's tree taps the wrong thing. Demand a refresh
+        # instead of silently aiming at coordinates that have moved.
+        if not fresh(Path(remote_xml), 30.0):
+            eyes("dump", remote_xml)
+            print("# stale tree; run the DEVICE_CMD above, then re-run",
+                  file=sys.stderr)
+            return 2
+        local = view("ui.xml")
+    else:
+        eyes("dump", remote_xml)
+        local = view("ui.xml")
     nodes = ui_nodes(local)
     needle = a.text.lower()
     hits = [n for n in nodes
@@ -260,13 +324,17 @@ def cmd_long(a):
 
 def cmd_swipe(a):
     if len(a.args) == 1:
-        # named gestures, tuned for a 1260x2800 portrait screen
+        # named gestures, scaled from PHONE_SIZE (default 1260x2800) so they
+        # survive a change of phone instead of tapping off-screen
+        w, h = screen_wh()
         preset = {
-            "up":    ("630", "2000", "630", "800", "300"),
-            "down":  ("630", "800", "630", "2000", "300"),
-            "left":  ("1100", "1400", "200", "1400", "300"),
-            "right": ("200", "1400", "1100", "1400", "300"),
+            "up":    (w // 2, int(h * 0.71), w // 2, int(h * 0.29), 300),
+            "down":  (w // 2, int(h * 0.29), w // 2, int(h * 0.71), 300),
+            "left":  (int(w * 0.87), h // 2, int(w * 0.16), h // 2, 300),
+            "right": (int(w * 0.16), h // 2, int(w * 0.87), h // 2, 300),
         }.get(a.args[0])
+        if preset:
+            preset = tuple(str(v) for v in preset)
         if not preset:
             print(f"unknown preset {a.args[0]!r}", file=sys.stderr)
             return 2
@@ -319,6 +387,8 @@ def main():
     p = sub.add_parser("ui", help="UI tree as text (cheapest observation)")
     p.add_argument("--max-age", type=float, default=30.0,
                    help="emit mode: reuse a dump newer than this many seconds")
+    p.add_argument("--strict", action="store_true",
+                   help="emit mode: exit 2 instead of warning on a stale dump")
     p.set_defaults(fn=cmd_ui)
     sub.add_parser("observe", help="screenshot + UI tree").set_defaults(fn=cmd_observe)
     sub.add_parser("shot", help="screenshot only").set_defaults(fn=cmd_shot)

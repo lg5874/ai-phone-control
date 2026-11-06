@@ -35,37 +35,42 @@ has no binder context — see the note at the bottom.
 
 Some sandboxes cannot spawn a device shell. The agent has a *tool* that runs
 one command at a time, and nothing else. `emit` mode prints what it would have
-run, and stops.
+run, then stops:
 
 ```bash
 export PHONE_EMIT=1
-$ ./host/phone.py observe --scale 540
-DEVICE_CMD: sh /sdcard/lcs/eyes.sh observe /sdcard/lcs
-DEVICE_PULL: /sdcard/lcs/shot.png -> /tmp/phone/shot.png
-DEVICE_PULL: /sdcard/lcs/ui.xml -> /tmp/phone/ui.xml
+$ ./host/phone.py ui
+DEVICE_CMD: sh /sdcard/lcs/eyes.sh dump /sdcard/lcs/ui.xml
+# stale tree; run the DEVICE_CMD above, then re-run
 ```
 
-The agent then runs that command with its own tool, copies the two files down,
-and calls the *pure* commands which need no device at all:
+The agent runs that one command with its own tool and calls us again. Both
+sides already see the same `$REMOTE_DIR` (`/sdcard/lcs` by default), so there
+is no copy step and no ingest flag: the artifact is readable in place.
 
 ```bash
-$ ./host/ui.py parse /tmp/phone/ui.xml
+$ ./host/phone.py ui          # fresh tree -> no DEVICE_CMD at all
+-- 87 actionable nodes
 C--- ( 630, 607) 隐私 #vlist_content
-...
-$ ./host/ui.py tap /tmp/phone/ui.xml 隐私
-630 607
-```
 
-Then it emits the tap:
-
-```bash
-$ PHONE_EMIT=1 ./host/phone.py tap 630 607
+$ ./host/phone.py tap-text 隐私
+-> 隐私 at (630,607)
 DEVICE_CMD: sh /sdcard/lcs/eyes.sh tap 630 607
 ```
 
-Two round trips per action, but the agent keeps full control and the repo
-stays honest about the fact that it does not own the transport. `ui.py` is
-deliberately device-free for exactly this reason.
+The rule in emit mode is **never report success without evidence**:
+
+| situation | behaviour |
+|---|---|
+| tree fresh | parse it, print no device command |
+| tree older than `--max-age` | warn on stderr; `--strict` makes it exit 2 |
+| tree missing | exit non-zero and print the `DEVICE_CMD` that would create it |
+| `top` with no fresh `top.txt` | exit 2 and print the command that writes one |
+| `tap-text` facing a stale tree | exit 2, do not aim at moved coordinates |
+| label not on screen | exit 1, name what was searched for |
+
+`ui.py` stays device-free, so `./host/ui.py parse <file>` and
+`./host/ui.py tap <file> <label>` work in every mode.
 
 ## Picking one
 

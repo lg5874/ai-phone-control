@@ -77,15 +77,16 @@ bridge and it speaks either `adb shell` or a bare `su -c`.
 ## Layout
 
 ```
-android/eyes.sh     the device half. toybox sh only. 139 lines.
+android/eyes.sh     the device half. toybox sh only. 143 lines.
 host/phone.py       the agent half. transport + gestures. subcommand CLI.
 host/ui.py          uiautomator XML -> one line per actionable node.
 examples/agent.py   the smallest loop that actually finishes a task.
-tests/test_ui.py    11 device-free tests.
+tests/test_ui.py    11 device-free tests for the parser.
+tests/test_phone_emit.py  11 device-free tests for the emit transport.
 docs/NOTES.md       what I measured, including the roads that dead-ended.
 docs/TRANSPORT.md   the three transports and when to use each.
 docs/PUBLISH.md     description, topics, push commands.
-CHANGELOG.md        what v1.0.0 contains.
+CHANGELOG.md        what each version contains.
 ```
 
 `eyes.sh` uses only what every Android ships: `screencap`, `uiautomator`,
@@ -111,6 +112,30 @@ export PHONE_TRANSPORT=exec
 export PHONE_EXEC="su -c"
 ./host/phone.py install
 ```
+
+### When there is no shell at all
+
+Some sandboxes give the agent one command at a time and nothing else.
+`PHONE_EMIT=1` prints the device command instead of running it; the agent runs
+it with its own tool and calls back. Both sides see `$REMOTE_DIR`
+(`/sdcard/lcs`), so nothing is copied and nothing is faked:
+
+```bash
+$ PHONE_EMIT=1 ./host/phone.py ui
+DEVICE_CMD: sh /sdcard/lcs/eyes.sh dump /sdcard/lcs/ui.xml
+# stale tree; run the DEVICE_CMD above, then re-run
+
+$ PHONE_EMIT=1 ./host/phone.py ui        # after running it
+-- 87 actionable nodes
+C--- ( 630, 607) 隐私 #vlist_content
+
+$ PHONE_EMIT=1 ./host/phone.py tap-text 隐私
+-> 隐私 at (630,607)
+DEVICE_CMD: sh /sdcard/lcs/eyes.sh tap 630 607
+```
+
+Exit codes are part of the contract: `0` did it, `1` label not on screen,
+`2` refused because the view was stale. See `docs/TRANSPORT.md` for the table.
 
 ## The UI tree is the good observation
 
@@ -174,6 +199,14 @@ for several taps before re-dumping.
   produces negative elapsed times. Use `/proc/uptime`.
 - **`uiautomator dump /dev/tty`** prints the path, not the XML.
 - **`input text` eats spaces** unless you send `%s`.
+- **`input text` cannot type non-ASCII.** It injects key events, so CJK and
+  accented characters are dropped: the field stays empty and the command still
+  exits 0. For Chinese, go through the clipboard and paste, or an IME, and
+  confirm the text in the next `ui` dump instead of trusting the exit code.
+- **A changed foreground package is not proof of progress.** A tap that opens a
+  dialog, loads a list, or shows an error toast leaves the package name alone.
+  Compare a UI-tree signature too — `examples/agent.py` shows the check — or you
+  will stop a step early and call it done.
 - **`topResumedActivity`** is the only reliable foreground probe on A12+;
   `mResumedActivity` is often absent.
 - **`screenrecord` dies with its parent shell.** If you must use it, `setsid`

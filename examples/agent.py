@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -32,6 +33,12 @@ from pathlib import Path
 HOST = Path(__file__).resolve().parent.parent / "host"
 PHONE = HOST / "phone.py"
 UI = HOST / "ui.py"
+
+# Mirror phone.py's two placements: pulled locally (adb) or read in place on
+# shared storage (emit / on-device agent).
+WORK = Path(os.environ.get("PHONE_WORK", "/tmp/phone"))
+REMOTE = os.environ.get("PHONE_DIR", "/sdcard/lcs")
+EMIT = os.environ.get("PHONE_EMIT") == "1"
 
 
 def run(*argv, timeout=180):
@@ -44,13 +51,40 @@ def run(*argv, timeout=180):
     return r.stdout
 
 
+def top_of():
+    """Foreground activity, or a marker when there is nothing to read yet.
+
+    In emit mode phone.py cannot ask the device anything; it reads the probe
+    `observe` left in $REMOTE_DIR. Returning the printed command here would
+    look like a real answer and quietly freeze the loop's progress check.
+    """
+    if EMIT:
+        p = Path(REMOTE) / "top.txt"
+        try:
+            return p.read_text(encoding="utf-8").strip()
+        except OSError:
+            return "(unknown)"
+    return run(PHONE, "top").strip()
+
+
 def observe():
     """One look. Returns (foreground, nodes)."""
     run(PHONE, "observe")
-    xml = Path("/tmp/phone/ui.xml")
+    xml = (Path(REMOTE) / "ui.xml") if EMIT else WORK / "ui.xml"
     nodes = json.loads(run(UI, "parse", xml, "--json"))
-    top = run(PHONE, "top").strip()
+    top = top_of()
     return top, nodes
+
+
+def signature(nodes):
+    """Structural fingerprint: enough to notice a dialog or a list loading.
+
+    Comparing only the foreground package misses everything that happens
+    inside one activity -- a popup, a tab switch, an error toast -- and that is
+    exactly when an agent stops early and calls the task done.
+    """
+    return tuple(sorted((n["label"], n["center"][0], n["center"][1])
+                        for n in nodes))
 
 
 def find(nodes, needle):
@@ -99,11 +133,11 @@ def solve(task: str, max_steps: int = 12, verbose: bool = True):
                       f"{[n['label'] for n in nodes if n['label']][:8]}")
             break
 
-        before = top
+        before = (top, signature(nodes))
         tap(node)
         top, nodes = observe()
 
-        moved = top != before
+        moved = (top, signature(nodes)) != before
         log.append(f"{want}: tapped ({node['center'][0]},{node['center'][1]}), "
                    f"{'screen changed' if moved else 'NO CHANGE'}")
         if verbose:

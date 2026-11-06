@@ -127,7 +127,11 @@ case "$cmd" in
     t1=$(cut -d' ' -f1 /proc/uptime)
     echo "shot $d/shot.png"
     echo "dump $d/ui.xml"
-    echo "top $(dumpsys activity activities 2>/dev/null | grep -m1 topResumedActivity | sed 's/.*topResumedActivity=//')"
+    # Write the foreground probe to a file as well as stdout: an agent in emit
+    # mode has no other way to read it, and a printed command is not a fact.
+    dumpsys activity activities 2>/dev/null | grep -m1 topResumedActivity \
+        | sed 's/.*topResumedActivity=//' > "$d/top.txt"
+    echo "top $(cat "$d/top.txt")"
     # /proc/uptime is seconds with 2 decimals; bash arithmetic needs ints
     echo "elapsed $(( ${t1%.*} - ${t0%.*} ))s"
     ;;
