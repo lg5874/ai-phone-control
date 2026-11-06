@@ -136,6 +136,89 @@ class EmitTransport(unittest.TestCase):
         self.assertIn("eyes.sh top >", r.stdout)
         self.assertIn("re-run", r.stderr)
 
+    # ------------------------------------------------------- observe modes
+    def test_observe_mode_ui_costs_no_pixels(self):
+        """The whole point of --mode ui: skip screencap, keep the tree."""
+        r = self.run_phone("observe", "--mode", "ui")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("隐私", r.stdout)
+        self.assertNotIn("screenshot:", r.stdout)
+        self.assertNotIn("shot.png", r.stdout)
+
+    def test_observe_mode_shot_costs_no_tree(self):
+        (self.dir / "shot.png").write_bytes(b"\x89PNG" + b"\0" * 64)
+        r = self.run_phone("observe", "--mode", "shot")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("shot.png", r.stdout)
+        self.assertNotIn("隐私", r.stdout)
+
+    def test_observe_full_is_unchanged_by_default(self):
+        (self.dir / "shot.png").write_bytes(b"\x89PNG" + b"\0" * 64)
+        r = self.run_phone("observe")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("screenshot:", r.stdout)
+        self.assertIn("隐私", r.stdout)
+
+    def test_observe_mode_ui_does_not_crash_on_missing_ui_flags(self):
+        """Regression: observe --mode ui forwarded to cmd_ui, which reads
+        --max-age/--strict that only the `ui` verb declares. It used to
+        AttributeError, which a model reads as "the tool is broken"."""
+        r = self.run_phone("observe", "--mode", "ui")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("AttributeError", r.stderr)
+
+
+class DiffBaseline(unittest.TestCase):
+    """--diff must mean "since my previous look", not "since the beginning"."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.work = self.dir / "work"
+        self.work.mkdir()
+        (self.dir / "ui.xml").write_text(SAMPLE, encoding="utf-8")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_phone(self, *args):
+        env = {**os.environ, "PHONE_EMIT": "1", "PHONE_DIR": str(self.dir),
+               "PHONE_WORK": str(self.work)}
+        return subprocess.run([sys.executable, str(PHONE), *map(str, args)],
+                              capture_output=True, text=True, env=env,
+                              timeout=120)
+
+    def test_first_diff_call_shows_the_full_tree(self):
+        r = self.run_phone("ui", "--diff")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("隐私", r.stdout)
+        self.assertIn("no baseline", r.stderr,
+                      "a silent first call is indistinguishable from 'no change'")
+
+    def test_second_diff_call_reports_no_change(self):
+        self.run_phone("ui", "--diff")
+        r = self.run_phone("ui", "--diff")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("no change", r.stdout)
+        self.assertNotIn("隐私", r.stdout)
+
+    def test_diff_after_a_real_change_reports_the_delta(self):
+        self.run_phone("ui", "--diff")
+        (self.dir / "ui.xml").write_text(
+            SAMPLE.replace('text="隐私"', 'text="电池"'), encoding="utf-8")
+        r = self.run_phone("ui", "--diff")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("+ 电池", r.stdout)
+        self.assertIn("- 隐私", r.stdout)
+
+    def test_baseline_is_shared_between_verbs(self):
+        """observe --diff and ui --diff must agree on what "previous" means."""
+        self.run_phone("ui", "--diff")
+        (self.dir / "shot.png").write_bytes(b"\x89PNG" + b"\0" * 64)
+        r = self.run_phone("observe", "--diff")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("no change", r.stdout)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

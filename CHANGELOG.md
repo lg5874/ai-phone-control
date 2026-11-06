@@ -1,5 +1,63 @@
 # Changelog
 
+## v1.3.0 — observe less, see more
+
+Four changes, all in service of one number: how much a single look costs.
+
+**Added — `phone_observe --mode` and `--diff`**
+- `--mode ui|shot|full` (default `full`). A full observation is ~422 KB of PNG
+  plus 30-40 lines of tree; most steps in a loop need one or the other. `mode=ui`
+  is the tree alone (same as `phone ui`), `mode=shot` is pixels alone. The
+  zero-flag path is byte-identical to v1.2 — an existing client keeps working.
+- `--diff` prints what changed since the previous diff call instead of the whole
+  tree. After a tap the honest answer is usually one added line, not forty
+  unchanged ones. The baseline lives in `$PHONE_WORK/last.xml` and is shared by
+  `phone ui` and `phone observe`, so both verbs agree on "previous".
+- The first `--diff` call has no baseline: it prints the full tree and says so on
+  stderr. Silence would be indistinguishable from "nothing changed", which is
+  the one reading that would make an agent skip a re-check.
+
+**Added — `ui.py diff OLD NEW`**
+- Reports `+` added, `-` removed, `~` moved, `!` changed, with a summary on
+  stderr. Identity is label+class+id, not coordinates: a list that scrolls keeps
+  its rows and moves them, and calling that "one left, another arrived" is the
+  noise a diff exists to remove.
+- Nodes are indexed as a multiset, so two identical rows stay two rows.
+- A centre that shifts within `move_tol` (default 8 px) is not a move.
+
+**Added — package exclusion (`PHONE_EXCLUDE_PACKAGES`)**
+- Borrowed from Windows-MCP's `EXCLUDE_PROCESSES`. Defaults to the common IMEs:
+  a keyboard is 40 letter keys that are on screen, clickable, and almost never
+  the target. An empty string excludes nothing.
+- The exclusion is by node `package`, so an IME drawn inside another app's window
+  is still excluded and the app's own nodes are not.
+
+**Added — per-glyph merge (`PHONE_MERGE_WORDS`, on by default)**
+- Borrowed from Windows-MCP's `MERGE_WORD_NODES`. Electron and some WebViews
+  report one node per glyph, so a CJK label arrives as `四`/`个`/`字`/`节` —
+  four unclickable lines that no label can match. They are merged back into
+  `四个字节`, with the centre recomputed to span the run so the result is still
+  tappable.
+- Clickable and scrollable nodes never merge: a target must stay its own line.
+  Only single-character incoming nodes merge, so two multi-character nodes side
+  by side (two words) are never glued into invented text.
+
+**Changed — one path for both filters**
+- `nodes_from()` is now the only way a dump becomes node dicts, and every command
+  (`parse`, `find`, `tap`, `diff`) goes through it. `parse` and `diff` disagreeing
+  about what is on screen would be worse than having no filter at all: the diff
+  would report phantom changes on every call.
+
+**Fixed — `observe --mode ui` crashed**
+- Forwarding to `cmd_ui` reached for `--max-age`/`--strict`, which only the `ui`
+  verb declares, and raised `AttributeError`. A model reads a traceback as "the
+  tool is broken" and stops. Defaults are now filled in before the forward.
+
+**Measured**
+- Tool-list cost with `PHONE_TOOLS` trimmed to six tools: 5096 → 2811 characters
+  (~1698 → ~937 tokens), 45% less, on every request.
+- 73 device-free tests pass (was 46).
+
 ## v1.2.0 — any agent, and a brake before the accelerator
 
 Two changes that belong together: the project stops being a two-shape thing

@@ -54,6 +54,8 @@ def _b_ui(a):
         argv += ["--max-age", str(float(a["max_age"]))]
     if a.get("strict"):
         argv.append("--strict")
+    if a.get("diff"):
+        argv.append("--diff")
     return argv
 
 
@@ -68,6 +70,11 @@ def _b_observe(a):
     argv = ["observe"]
     if a.get("scale"):
         argv += ["--scale", str(int(a["scale"]))]
+    mode = a.get("mode")
+    if mode:
+        argv += ["--mode", str(mode)]
+    if a.get("diff"):
+        argv.append("--diff")
     return argv
 
 
@@ -102,6 +109,10 @@ TOOLS = [
             "strict": {"type": "boolean",
                        "description": "emit mode: exit 2 instead of warning when "
                                       "the dump is stale"},
+            "diff": {"type": "boolean",
+                     "description": "print only what changed since your previous "
+                                    "look: one added line beats forty unchanged "
+                                    "ones when you are checking an action"},
         }),
         "build": _b_ui,
     },
@@ -189,10 +200,23 @@ TOOLS = [
     },
     {
         "name": "phone_observe",
-        "description": "One call that returns screenshot path AND the UI tree. "
-                       "The widest observation; costs the most.",
+        "description":
+            "The widest observation, and the most expensive: screenshot + tree "
+            "+ foreground. Do not reach for it by reflex -- pick the mode. "
+            "mode=ui is the same tree as phone_ui (no pixels, ~2 s). mode=shot "
+            "is pixels only, for a canvas or a game with no tree. mode=full is "
+            "both. Add diff=true to get what changed since your last diff call "
+            "instead of the whole tree: after a tap the honest answer is "
+            "usually one added line, not forty unchanged ones.",
         "inputSchema": _obj({
-            "scale": {"type": "integer"},
+            "scale": {"type": "integer",
+                      "description": "downscale width in px, 0 = physical"},
+            "mode": {"type": "string", "enum": ["full", "ui", "shot"],
+                     "description": "full (default) = pixels + tree; ui = tree "
+                                    "only; shot = pixels only"},
+            "diff": {"type": "boolean",
+                     "description": "print only what changed since the previous "
+                                    "diff observation"},
         }),
         "build": _b_observe,
     },

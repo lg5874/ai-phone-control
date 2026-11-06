@@ -174,6 +174,25 @@ class McpAdapter(unittest.TestCase):
         self.client.text("phone_long_press", {"x": 10, "y": 20})
         self.assertEqual(self.argv_seen(), ["long", "10", "20", "--ms", "600"])
 
+    # -- observe: the cost knob --------------------------------------------
+    def test_observe_mode_and_diff_map_to_flags(self):
+        self.client.text("phone_observe", {"mode": "ui", "diff": True})
+        self.assertEqual(self.argv_seen(), ["observe", "--mode", "ui", "--diff"])
+
+    def test_observe_defaults_to_full_without_extra_flags(self):
+        # The zero-configuration path must stay byte-identical to v1.2: a
+        # client that never heard of --mode keeps getting the full observation.
+        self.client.text("phone_observe", {})
+        self.assertEqual(self.argv_seen(), ["observe"])
+
+    def test_observe_mode_enum_is_advertised(self):
+        tools = {t["name"]: t for t in
+                 self.client.rpc("tools/list")["result"]["tools"]}
+        schema = tools["phone_observe"]["inputSchema"]
+        self.assertEqual(schema["properties"]["mode"]["enum"],
+                         ["full", "ui", "shot"])
+        self.assertIn("diff", schema["properties"])
+
     # -- the exit code is the contract --------------------------------------
     def test_success_carries_exit_zero(self):
         text = self.client.text("phone_ui")

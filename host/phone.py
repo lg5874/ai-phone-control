@@ -339,6 +339,34 @@ def fresh(path: Path, max_age: float = 30.0) -> bool:
         return False
 
 
+def render_tree(xml: Path, want_diff: bool = False) -> int:
+    """Print the tree, or what changed since the last render_tree call.
+
+    The baseline lives in WORK/last.xml and is refreshed on every call, so
+    --diff always means "since my previous look", whichever verb produced it.
+    A first --diff call has no baseline: it prints the full tree rather than
+    nothing, because "no output" is indistinguishable from "nothing changed".
+    """
+    previous = WORK / "last.xml"
+    if want_diff and previous.exists():
+        r = subprocess.run([sys.executable, str(UI_PY), "diff", str(previous), str(xml)],
+                           capture_output=True, text=True)
+    else:
+        if want_diff:
+            print("# no baseline yet: showing the full tree", file=sys.stderr)
+        r = subprocess.run([sys.executable, str(UI_PY), "parse", str(xml)],
+                           capture_output=True, text=True)
+    sys.stdout.write(r.stdout)
+    sys.stderr.write(r.stderr)
+    # Copy rather than move: the dump is also the artifact a human may want.
+    try:
+        WORK.mkdir(parents=True, exist_ok=True)
+        previous.write_bytes(xml.read_bytes())
+    except OSError:
+        pass  # a missing baseline only costs a full dump next time
+    return r.returncode
+
+
 def cmd_ui(a):
     """Text-only observation: cheapest way to see what is on screen.
 
@@ -349,6 +377,7 @@ def cmd_ui(a):
     then reports success, which is the failure mode this whole file exists
     to avoid.
     """
+    want_diff = getattr(a, "diff", False)
     if EMIT:
         shared = Path(f"{REMOTE_DIR}/ui.xml")
         # A fresh tree is the whole point of this subcommand: print nothing but
@@ -363,17 +392,33 @@ def cmd_ui(a):
                 return 2
             shared = view("ui.xml")  # missing tree -> one clean error, no trace
             warn_stale(shared, a.max_age)
-        r = subprocess.run([sys.executable, str(UI_PY), "parse", str(shared)],
-                           capture_output=True, text=True)
-        sys.stdout.write(r.stdout)
-        sys.stderr.write(r.stderr)
-        return r.returncode
+        return render_tree(shared, want_diff)
     a.json = False
     a.raw = False
-    return cmd_dump(a)
+    eyes("dump", f"{REMOTE_DIR}/ui.xml")
+    local = view("ui.xml")
+    return render_tree(local, want_diff)
 
 
 def cmd_observe(a):
+    """Screenshot + tree + foreground, with the cost knob the caller needs.
+
+    A full observation is ~422 KB of PNG plus 30-40 lines of tree. Most steps
+    in a loop need one or the other, not both. --mode picks; --diff replaces
+    the tree with what changed since the previous observation, which after a
+    tap is usually one line instead of forty.
+    """
+    mode = getattr(a, "mode", "full") or "full"
+    if mode == "ui":
+        # cmd_ui reads --max-age/--strict, which only the `ui` subcommand
+        # declares. Fill the defaults in instead of requiring the caller to
+        # pass flags that belong to a different verb.
+        a.max_age = getattr(a, "max_age", 30.0)
+        a.strict = getattr(a, "strict", False)
+        return cmd_ui(a)
+    if mode == "shot":
+        return cmd_shot(a)
+
     print(eyes("observe", REMOTE_DIR).strip())
     png = view("shot.png")
     xml = view("ui.xml")
@@ -388,10 +433,7 @@ def cmd_observe(a):
         png = scale_image(png, a.scale)
     print(f"\n--- screenshot: {png} ({png.stat().st_size} B)")
     print("--- ui:")
-    r = subprocess.run([sys.executable, str(UI_PY), "parse", str(xml)],
-                       capture_output=True, text=True)
-    sys.stdout.write(r.stdout)
-    return 0
+    return render_tree(xml, getattr(a, "diff", False))
 
 
 def cmd_tap(a):
@@ -503,6 +545,8 @@ def main():
                    help="emit mode: reuse a dump newer than this many seconds")
     p.add_argument("--strict", action="store_true",
                    help="emit mode: exit 2 instead of warning on a stale dump")
+    p.add_argument("--diff", action="store_true",
+                   help="print what changed since the previous look")
     p.set_defaults(fn=cmd_ui)
     sub.add_parser("observe", help="screenshot + UI tree").set_defaults(fn=cmd_observe)
     sub.add_parser("shot", help="screenshot only").set_defaults(fn=cmd_shot)
@@ -542,6 +586,14 @@ def main():
     for name in ("observe", "shot"):
         sub.choices[name].add_argument("--scale", type=int, default=0,
                                        help="downscale width in px, 0 = keep")
+
+    sub.choices["observe"].add_argument(
+        "--mode", choices=("full", "ui", "shot"), default="full",
+        help="full = pixels + tree (default); ui = tree only; shot = pixels only")
+    sub.choices["observe"].add_argument(
+        "--diff", action="store_true",
+        help="print what changed since the last --diff observation instead of "
+             "the whole tree")
 
     a = ap.parse_args()
     if not hasattr(a, "scale"):

@@ -14,10 +14,50 @@ phone_swipe       preset (up/down/left/right) or explicit pixels
 phone_press_key   back / home / enter / recents / KEYCODE_*
 phone_type        type ASCII into the focused field
 phone_screenshot  screenshot -> path + size
-phone_observe     screenshot + tree in one call
+phone_observe     screenshot + tree; mode=full|ui|shot, diff=true
 phone_foreground  which app is in front
 phone_size        screen geometry
 ```
+
+## Two cost knobs worth knowing
+
+A full observation is ~422 KB of PNG plus 30-40 lines of tree. Most steps in a
+loop need one or the other, not both.
+
+| call | cost | when |
+|---|---|---|
+| `phone_ui` | tree only, ~2 s | the default loop tool |
+| `phone_observe {mode:"ui"}` | tree only | same as above, one verb |
+| `phone_observe {mode:"shot"}` | pixels only | canvas, game, treeless WebView |
+| `phone_observe {mode:"full"}` | both | first look at an unfamiliar screen |
+| `phone_ui {diff:true}` | delta only | "did my tap do anything" |
+
+`diff:true` prints what changed since your previous diff call — one added line
+instead of forty unchanged ones. The first call has no baseline, so it prints
+the whole tree and says so on stderr; silence would be indistinguishable from
+"nothing changed". The baseline lives in `$PHONE_WORK/last.xml` and is shared by
+`phone_ui` and `phone_observe`, so the two verbs agree on what "previous" means.
+
+## Two filters, borrowed from Windows-MCP
+
+| env | default | effect |
+|---|---|---|
+| `PHONE_EXCLUDE_PACKAGES` | the common IMEs | skip these packages entirely |
+| `PHONE_MERGE_WORDS` | `1` (on) | join per-glyph nodes into one text run |
+
+The IME exclusion exists because a keyboard is 40 letter keys that are on screen,
+clickable, and almost never the target. Set it to an empty string to exclude
+nothing.
+
+The word merge exists because Electron and some WebViews report one node per
+glyph: a CJK label arrives as `四` / `个` / `字` / `节`, four unclickable lines
+that no label can match. Merging restores `四个字节` as one node whose centre
+still lies inside the run, so it stays tappable. Clickable and scrollable nodes
+never merge — a target must stay its own line.
+
+Both filters are applied inside `nodes_from()`, the single path every command
+takes. `parse` and `diff` disagreeing about what is on screen would be worse
+than having no filter at all.
 
 ## Install
 
