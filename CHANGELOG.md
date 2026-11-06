@@ -1,5 +1,43 @@
 # Changelog
 
+## v1.1.0 — two shapes
+
+The tool now ships in two forms for two different constraints, and both obey the
+same rule: an action reports whether the screen changed.
+
+**Added — native package (`operit-package/`)**
+- `com.operit.phone_control.js`: one file, 11 tools (`screen`, `find`,
+  `tap_text`, `tap_xy`, `swipe`, `press`, `type_text`, `screen_text`,
+  `foreground`, `shot`, `wait`), built on Operit's `Tools.UI` bridge. No root,
+  no adb, no `eyes.sh`, no Python.
+- Same contract as the shell half: `changed` is a fingerprint of package +
+  activity + node count + label length sampled every 150 ms, so "the tap did
+  nothing" becomes visible instead of implied. A missing label returns
+  `NOT_ON_SCREEN … nothing was tapped`.
+- Swipe presets scale from `Tools.System.getDeviceInfo()`, never a constant.
+- Verified against a live screen (V2403A / Android 15): tap → `changed: true`
+  (signature `73/285 → 78/268`), absent label → `NOT_ON_SCREEN`, swipe up →
+  `630,1930 → 630,750`, `BACK` accepted without the `KEYCODE_` prefix,
+  screenshot 383012 bytes.
+
+**Added — skill**
+- `SKILL.md`: the shell half written for an agent to read — when to use it, the
+  four-step loop, the real `ui` output format, exit codes 0/1/2, and four rules
+  (an action is not evidence; in emit mode `DEVICE_CMD:` is an instruction; a
+  stale tree may describe a screen that is gone; prefer labels over pixels).
+
+**Added**
+- `phone`: a 12-line wrapper, so every `./phone ui` in README.md and SKILL.md is
+  a command you can type as written. Before this the docs assumed an alias.
+- `operit-package/README.md`: install paths, the tool table, the contract, and
+  the hardware verification log.
+
+**Fixed — found while writing the package**
+- `find` / `tap_text` exact matching compared the combined `"text | desc"`
+  label, so an exact pin never matched a node whose text and description both
+  existed. Matching now checks the raw `text`, the raw `contentDesc`, then the
+  combined label.
+
 ## v1.0.1 — truth in emit mode
 
 Everything here came from driving a real phone through `emit` (the mode where

@@ -74,6 +74,24 @@ So the split is: **observation and input run on the Android side; parsing runs
 wherever you like.** The agent process is the bridge. `phone.py` is that
 bridge and it speaks either `adb shell` or a bare `su -c`.
 
+## Two shapes, one rule
+
+| | shell half (this directory) | native half (`operit-package/`) |
+|---|---|---|
+| needs | root on the phone, python3 on the host | Operit's accessibility bridge, no root |
+| drives the screen with | `uiautomator`, `input`, `screencap` | `Tools.UI.getPageInfo` / `tap` / `swipe` |
+| how a model uses it | CLI: `./phone ui`, `./phone tap-text "登录"` | 11 package tools: `screen`, `tap_text`, … |
+| install | `./phone install` | copy one `.js` into `packages/` |
+
+Both report whether the screen actually changed (`changed`, a fingerprint of
+package + activity + node count) instead of claiming the action worked. Use the
+shell half for any agent that can run commands; use the native half when there
+is no shell, no root, only Operit.
+
+`SKILL.md` is the shell half written as an agent skill: drop the directory into
+a skills folder and the model reads when to use it, how to call it, and what
+exit codes 1 and 2 mean.
+
 ## Layout
 
 ```
@@ -83,6 +101,9 @@ host/ui.py          uiautomator XML -> one line per actionable node.
 examples/agent.py   the smallest loop that actually finishes a task.
 tests/test_ui.py    11 device-free tests for the parser.
 tests/test_phone_emit.py  11 device-free tests for the emit transport.
+SKILL.md            the same tool as an agent skill: when, how, exit codes.
+phone               wrapper so `./phone ui` in these docs is literal.
+operit-package/     the native half: 11 tools on Operit's UI bridge, no root.
 docs/NOTES.md       what I measured, including the roads that dead-ended.
 docs/TRANSPORT.md   the three transports and when to use each.
 docs/PUBLISH.md     description, topics, push commands.

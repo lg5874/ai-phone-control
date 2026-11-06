@@ -1,0 +1,12 @@
+#!/bin/sh
+# Convenience wrapper so the commands in README.md and SKILL.md are literal:
+#
+#     ./phone ui
+#     ./phone tap-text "隐私"
+#
+# It resolves the repo root from its own location, then hands over to python.
+# Set PHONE_PYTHON to use a specific interpreter.
+set -eu
+
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec "${PHONE_PYTHON:-python3}" "$here/host/phone.py" "$@"
