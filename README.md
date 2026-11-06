@@ -9,6 +9,9 @@
 Give an LLM agent eyes and hands on an Android phone. Two small files, no
 dependencies, nothing left running.
 
+[![release](https://img.shields.io/github/v/release/lg5874/ai-phone-control?label=release)](https://github.com/lg5874/ai-phone-control/releases)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 ```bash
 phone ui                       # what is on screen, as text with coordinates
 phone tap-text "隐私"           # tap it by label
@@ -82,6 +85,7 @@ tests/test_ui.py    11 device-free tests.
 docs/NOTES.md       what I measured, including the roads that dead-ended.
 docs/TRANSPORT.md   the three transports and when to use each.
 docs/PUBLISH.md     description, topics, push commands.
+CHANGELOG.md        what v1.0.0 contains.
 ```
 
 `eyes.sh` uses only what every Android ships: `screencap`, `uiautomator`,
