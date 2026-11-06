@@ -93,11 +93,11 @@ as the second half of the project:
 
 | you have | use | read |
 |---|---|---|
-| a shell + adb (laptop, CI) | the CLI, `PHONE_TRANSPORT=adb` | `docs/INTEGRATE.md#1` |
-| a root shell on the phone | the CLI, `PHONE_TRANSPORT=exec` | `docs/INTEGRATE.md#2` |
-| Shizuku, no root | the CLI, `PHONE_EXEC='rish -c'` | `docs/INTEGRATE.md#3` |
+| a shell + adb (laptop, CI) | the CLI, `PHONE_TRANSPORT=adb` | `docs/INTEGRATE.md#1-adb-from-a-laptop` |
+| a root shell on the phone | the CLI, `PHONE_TRANSPORT=exec` | `docs/INTEGRATE.md#2-exec-an-existing-root-shell` |
+| Shizuku, no root | the CLI, `PHONE_EXEC='rish -c'` | `docs/INTEGRATE.md#3-shizuku-no-root` |
 | an MCP client (Claude Desktop, Cline, Cherry Studio, Cursor) | `adapters/mcp/phone_mcp.py` | `adapters/mcp/README.md` |
-| your own function-calling loop | `adapters/openai-tools.json` | `docs/INTEGRATE.md#4` |
+| your own function-calling loop | `adapters/openai-tools.json` | `docs/INTEGRATE.md#4-your-own-loop-function-calling` |
 | a vendor AI app with only its own UI bridge | a native package for that platform | `adapters/README.md` |
 | a chat box and nothing else | a human runs the commands | `adapters/prompt-only.md` |
 

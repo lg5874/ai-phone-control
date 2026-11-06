@@ -19,12 +19,12 @@ run one shell command, it can drive a phone: see `docs/INTEGRATE.md`.
 
 | where your agent runs | what it has | use | read |
 |---|---|---|---|
-| laptop / CI (Claude Code, Codex CLI, Cursor, a script) | a shell + USB or wireless adb | the CLI, `PHONE_TRANSPORT=adb` | `docs/INTEGRATE.md#1` |
+| laptop / CI (Claude Code, Codex CLI, Cursor, a script) | a shell + USB or wireless adb | the CLI, `PHONE_TRANSPORT=adb` | `docs/INTEGRATE.md#1-adb-from-a-laptop` |
 | an MCP client (Claude Desktop, Cline, Cherry Studio, Cursor, RikkaHub, …) | MCP over stdio | `mcp/phone_mcp.py` | `mcp/README.md` |
-| on the phone itself (Termux, proot, a rooted sandbox) | a shell + root | the CLI, `PHONE_TRANSPORT=exec` | `docs/INTEGRATE.md#2` |
-| on the phone, root but no shell bridge | Shizuku / `rish` | the CLI, `PHONE_EXEC='rish -c'` | `docs/INTEGRATE.md#3` |
+| on the phone itself (Termux, proot, a rooted sandbox) | a shell + root | the CLI, `PHONE_TRANSPORT=exec` | `docs/INTEGRATE.md#2-exec-an-existing-root-shell` |
+| on the phone, root but no shell bridge | Shizuku / `rish` | the CLI, `PHONE_EXEC='rish -c'` | `docs/INTEGRATE.md#3-shizuku-no-root` |
 | on the phone, no shell at all (vendor AI apps) | only its own UI bridge | a native package for that platform | `operit/README.md` |
-| your own loop, function calling | JSON tool schemas | `openai-tools.json` | `docs/INTEGRATE.md#4` |
+| your own loop, function calling | JSON tool schemas | `openai-tools.json` | `docs/INTEGRATE.md#4-your-own-loop-function-calling` |
 | a chat box with no tools (web GPT, phone assistant apps) | a human | the prompt in `prompt-only.md` — the human is the transport | `prompt-only.md` |
 
 ## Contract every adapter keeps
