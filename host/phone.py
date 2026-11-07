@@ -324,9 +324,11 @@ def hud_say(state: str, task: str, think: str = "", step: str = "") -> None:
     out = sh_probe(f"sh {REMOTE_DIR}/eyes.sh hud say "
                    + " ".join(shlex.quote(x) for x in (task, think, step, state)))
     if not out and not EMIT:
-        # Distinguish "the verb ran and said nothing" from "we never reached
-        # the device" by asking once, cheaply. A silent no-op here is the exact
-        # failure that cost a day of staring at a blank panel.
+        # Distinguish the three ways this goes quiet, because they have
+        # different fixes and the generic message cost a day once already:
+        #   panel dead   -- eyes.sh refuses to write into a path nobody polls
+        #   no transport -- proot with no /system/bin/sh
+        #   wrote fine   -- but the panel is not rendering (check logcat LCSHUD)
         if not sh_probe("echo alive").strip():
             raise SystemExit(
                 "cannot reach the device to publish status: "
@@ -334,6 +336,12 @@ def hud_say(state: str, task: str, think: str = "", step: str = "") -> None:
                 "Inside a proot container there is no /system/bin/sh -- "
                 "set PHONE_EMIT=1 and run the printed DEVICE_CMD by hand, "
                 "or run phone.py on the device side.")
+        # Reachable device, but the verb still said nothing. Ask why once.
+        why = sh_probe(f"sh {REMOTE_DIR}/eyes.sh hud on 2>&1").strip()
+        raise SystemExit(
+            "the panel accepted no status, so the card on screen is stale. "
+            f"`eyes.sh hud on` says: {why or '(nothing)'}\n"
+            "Fix with: am start-foreground-service -n com.lcs.hud/.HudService")
 
 
 def hud_note(state: str, task: str, think: str = "", step: str = "") -> None:
@@ -373,7 +381,11 @@ def gate(a) -> int:
         try:
             hud_note("paused", "暂停中 · 人类正在接管",
                      "已收到暂停信号，我停在这里等你", "等待继续")
-        except Exception:
+        except (Exception, SystemExit):
+            # SystemExit too: hud_publish goes through sh(), which raises it on
+            # a device error, and since v1.4.1 eyes.sh also refuses to publish
+            # into a dead panel. A pause notice that cannot be delivered must
+            # not replace the refusal above with a traceback.
             pass
         return EXIT_PAUSED
     if getattr(a, "force", False):

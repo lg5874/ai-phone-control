@@ -277,6 +277,13 @@ for several taps before re-dumping.
   `/system`, so `PHONE_EXEC` cannot start and Python reports a missing binary
   rather than a missing shell. Set `PHONE_EMIT=1` and run the printed
   `DEVICE_CMD`, or drive the phone from a shell that has `/system/bin`.
+- **A stopped panel is indistinguishable from a working one.** `huddir` falls
+  back to `/sdcard/lcs` when no `com.lcs.hud` process exists, so every write
+  succeeds, `hud status` prints a plausible `dir=`, and the card on screen never
+  changes because nothing is polling. `hud status` now prints `panel=` first for
+  this reason, and `hud say|beat|publish` start the service or refuse. `pause`
+  is deliberately exempt: it is the human's off switch, and the gate reads it
+  through the same fallback.
 
 ## License
 

@@ -1,4 +1,54 @@
 # Changelog
+## v1.4.1 — a dead panel no longer looks alive
+v1.4.0 fixed *where* to write. This fixes *whether anyone is reading*, which
+turned out to be the same bug wearing a different hat: a stopped panel and a
+working one were indistinguishable from the command line.
+**Fixed — `huddir` fell back to a dead path whenever the panel was stopped**
+- `eyes.sh huddir` falls back to the legacy `/sdcard/lcs` when no panel process
+  exists. That fallback is right for a phone with no panel installed, and wrong
+  for every other case: with the app installed but stopped, every write
+  *succeeded*, `hud status` printed a plausible `dir=`, and the card on screen
+  never changed because nothing was polling it. Observed on a real device: the
+  panel had been killed, `hud say` reported success, the card was hours stale.
+- Added `eyes.sh hudpkg`, which answers `installed` / `absent` / `unknown`.
+  Three answers, not two: `pm` missing from `PATH` is not the package being
+  gone, and reporting it as gone would turn a broken environment into a
+  confident lie. `pm path` exits 0 and prints nothing for a missing package, so
+  the output decides, not the exit code.
+- `hud say|beat|publish` now start the panel service when it is installed but
+  stopped, wait up to 3 s for a pid, and **refuse to write** if it still will
+  not come up. `status` and `pause` never start it: the host gate calls
+  `status` before every action, and a read that spawns an app would tax every
+  tap.
+**Fixed — `pause` is never refused, on purpose**
+- The host gate reads `hud.ctl` through `hud status`, which reads it through
+  `huddir` — the same fallback path. So with the panel dead, a pause still
+  reaches the agent. Refusing the write would take away the human's off switch
+  at exactly the moment the panel is broken. Only writes whose output a live
+  panel consumes are gated.
+**Fixed — `hud status` printed the path but not the liveness**
+- `panel=live|dead|absent|unknown` now comes first, before `dir=`. A `dir=` that
+  looks right while the panel is dead is the whole failure mode, so the
+  liveness is printed before the thing that used to look reassuring.
+- `hud on` no longer says "not running" for both "installed but stopped" and
+  "never installed" — two states with opposite fixes.
+**Fixed — a stale card could be reported as a successful publish**
+- `hud_say` returned quietly whenever the transport worked but the verb said
+  nothing, which is the exact shape of "wrote fine, nothing renders". It now
+  asks `eyes.sh hud on` once and raises with the reason and the fix.
+- The pause notice in `gate()` caught `Exception`, but `sh()` raises
+  `SystemExit`. With the new refusal in place, a dead panel would have turned a
+  delivered `PAUSED` refusal into a traceback. Now caught explicitly.
+**Fixed — three tests that had quietly stopped testing**
+- `_sh_block` sliced on the bare substring `"publish)"`, which after this
+  release also matched the new `say|beat|publish)` wake-up arm — so the publish
+  assertions were checking the wrong lines while staying green.
+- `hudpkg` contains a nested `case`, so slicing to the first `;;` truncated the
+  block right after `installed`, making its assertions vacuous.
+- The refusal-guard test sliced the first `case "$sub" in`, which is the
+  wake-up case, not the guard.
+- All three now anchor on whole-line verb labels and on the `panel=dead` marker
+  instead of on punctuation. 100 tests → 108, all green.
 
 ## v1.4.0 — the panel actually talks
 

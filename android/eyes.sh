@@ -45,6 +45,7 @@ export PATH
 #   eyes.sh size                screen geometry + density
 #   eyes.sh observe [dir]       shot + dump + top in one call
 #   eyes.sh huddir              where the floating panel reads its files
+#   eyes.sh hudpkg              installed|absent|unknown for com.lcs.hud
 #   eyes.sh hud pause|run|status|on|off
 
 #
@@ -342,6 +343,23 @@ case "$cmd" in
     fi
     ;;
 
+  hudpkg)
+    # Is the panel installed at all?
+    #
+    # Three answers, because two are not enough. "Installed but not running"
+    # is the case that must never silently write to the legacy path, and "we
+    # cannot tell" must not be reported as "absent" -- that would turn a
+    # broken PATH into a confident lie.
+    #
+    # `pm path <pkg>` exits 0 and prints nothing for a missing package, so the
+    # output is what decides, not the exit code.
+    o=$(pm path com.lcs.hud 2>/dev/null)
+    case "$o" in
+      package:*) echo installed ;;
+      *) if command -v pm >/dev/null 2>&1; then echo absent; else echo unknown; fi ;;
+    esac
+    ;;
+
 hud)
     # Control + status plumbing for the floating panel (com.lcs.hud).
     #
@@ -357,6 +375,68 @@ hud)
     # installed: the agent honours the same file, so a human can still stop it
     # from a shell. `hud status` prints what the agent last published.
     sub=${1:-status}
+    # Is the panel alive, and if not, can we make it alive?
+    #
+    # This used to be a plain `pidof`. The bug that hid behind that: `huddir`
+    # falls back to the legacy /sdcard path when no panel process exists, so
+    # every write below *succeeded*, `hud status` printed a plausible dir=,
+    # and the card on screen never changed -- because nothing was polling it.
+    # A dead panel therefore looked exactly like a working one.
+    P=$(pidof com.lcs.hud)
+    # Only the verbs that need a *live* reader may wake the panel. `status` and
+    # `pause` must not: the host gate calls `status` before every single
+    # action, and a read that spawns an app (or waits 3 s for one that will not
+    # start) would tax every tap on the phone.
+    case "$sub" in
+      say|beat|publish) need_live=1 ;;
+      *) need_live=0 ;;
+    esac
+    if [ -z "$P" ] && [ "$need_live" = 1 ]; then
+      pkg=$(sh "$0" hudpkg)
+      if [ "$pkg" = installed ]; then
+        am start-foreground-service -n com.lcs.hud/.HudService >/dev/null 2>&1 \
+          || am start -n com.lcs.hud/.MainActivity >/dev/null 2>&1
+        i=0
+        while [ "$i" -lt 15 ]; do
+          P=$(pidof com.lcs.hud)
+          [ -n "$P" ] && break
+          sleep 0.2
+          i=$((i + 1))
+        done
+      fi
+    fi
+    pkg=${pkg:-$(sh "$0" hudpkg)}
+    # Three-valued on purpose: an empty pidof plus a PATH without `pm` means we
+    # do not know, and "do not know" must not be reported as "not installed".
+    if [ -n "$P" ]; then
+      panel=live
+    elif [ "$pkg" = absent ]; then
+      panel=absent
+    elif [ "$pkg" = installed ]; then
+      panel=dead
+    else
+      panel=unknown
+    fi
+    # Refuse only the writes that would be *lost*, and only in the two states
+    # where they would be. Deliberately not applied to `pause`/`run`: with the
+    # panel dead, `huddir` falls back and so does the host gate, which reads
+    # the same hud.ctl through this same verb -- so a pause still stops the
+    # agent, and refusing it would take away the human's off switch precisely
+    # when the panel is broken.
+    case "$sub" in
+      say|beat|publish)
+        if [ "$panel" = dead ]; then
+          echo "hud $sub: panel is installed but not running (pidof empty after start)" >&2
+          echo "  nothing would read the write, so the card would stay stale." >&2
+          echo "  try: am start-foreground-service -n com.lcs.hud/.HudService" >&2
+          exit 1
+        fi
+        if [ "$panel" = unknown ]; then
+          echo "hud $sub: cannot tell whether com.lcs.hud is installed (pm not on PATH)" >&2
+          exit 1
+        fi
+        ;;
+    esac
     D=$(sh "$0" huddir)
     # Writing into the panel's namespace is the whole trick: the path exists
     # only inside that pid's mount namespace, so every read and write below is
@@ -389,6 +469,10 @@ hud)
         echo "hud: running"
         ;;
       status)
+        # `panel=` first: a dir= that looks right while the panel is dead is
+        # the exact failure this release is about, so the liveness comes before
+        # the path rather than after it.
+        echo "panel=$panel${P:+ pid=$P}"
         echo "dir=$D"
         echo "ctl=$(hr hud.ctl || echo missing)"
         hr hud.status || echo "status=missing"
@@ -468,12 +552,18 @@ hud)
         ;;
       on|off)
         # Whether the panel service is alive, and if not, why.
-        if pidof com.lcs.hud >/dev/null 2>&1; then
-          echo "hud: running (pid $(pidof com.lcs.hud))"
-        else
-          echo "hud: not running"
-          echo "hud: start with: am start-foreground-service -n com.lcs.hud/.HudService"
-        fi
+        #
+        # `panel=` is the same word `status` prints, so a caller can grep one
+        # field instead of guessing from a pid. The old wording said "not
+        # running" for both "installed but stopped" and "never installed",
+        # which are the two cases with opposite fixes.
+        case "$panel" in
+          live) echo "hud: running (pid $P)" ;;
+          dead) echo "hud: installed but not running"
+                echo "hud: start with: am start-foreground-service -n com.lcs.hud/.HudService" ;;
+          absent) echo "hud: not installed (no com.lcs.hud); the legacy $REMOTE_DIR_FALLBACK path is in use" ;;
+          *) echo "hud: unknown (pm not on PATH, so install state cannot be read)" ;;
+        esac
         ;;
       *)
         echo "hud: unknown sub '$sub'; use pause|run|status|on|off" >&2

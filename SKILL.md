@@ -106,6 +106,20 @@ If the panel shows "AI 已 15s 无更新" while you are working, the heartbeat i
 reaching it — check `eyes.sh hud status` first, and check `dir=` against the
 directory the panel logs at `adb logcat -s LCSHUD`.
 
+Three more things, all of them ways a dead panel passed for a live one:
+
+- **`panel=` is the field that matters, not `dir=`.** `hud status` prints
+  `panel=live|dead|absent|unknown` before `dir=`. With the app installed but
+  stopped, `huddir` falls back to `/sdcard/lcs`, so `dir=` looked plausible and
+  every write succeeded into a directory nobody polls. If `panel=dead`, nothing
+  is reading your card no matter how correct the path looks.
+- **`hud say` will start the panel for you, and refuse if it cannot.** Only
+  `say|beat|publish` do this — `status` and `pause` never spawn an app, because
+  the gate calls `status` before every action.
+- **`pause` still works with the panel dead.** It reads through the same
+  fallback path the gate reads, so the human's off switch survives a broken
+  panel. Do not "fix" that by refusing the write.
+
 ## Exit codes
 
 | code | meaning |

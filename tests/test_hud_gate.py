@@ -255,6 +255,119 @@ class PanelPath(unittest.TestCase):
         self.assertIn('echo "dir=$D"', block)
 
 
+class HudLiveness(unittest.TestCase):
+    """A dead panel must not look like a working one.
+
+    v1.4.0 fixed *where* to write. v1.4.1 fixes *whether anyone is reading*:
+    `huddir` falls back to the legacy path when no panel process exists, so
+    every write succeeded, `hud status` printed a plausible dir=, and the card
+    on screen never changed because nothing was polling it.
+    """
+
+    def setUp(self):
+        self.sh = io.open(os.path.join(ROOT, "android", "eyes.sh"),
+                          encoding="utf-8").read()
+        self.py = io.open(os.path.join(ROOT, "host", "phone.py"),
+                          encoding="utf-8").read()
+
+    def _verb_block(self, name):
+        # A top-level verb of eyes.sh: the label is a line of its own, indented
+        # by at most two spaces ("hud)" is flush left, "  hudpkg)" is not), and
+        # the body runs until the next such label. Slicing on ";;" is wrong
+        # here because a verb may contain nested `case` arms of its own --
+        # hudpkg has one, and stopping at its first ";;" truncated the block
+        # right after `installed`, which made the assertions vacuous instead of
+        # failing. Both mistakes are the same lesson: a test that slices shell
+        # by punctuation is a test that quietly stops testing.
+        pat = re.compile(r"^ {0,2}" + re.escape(name) + r"\)\s*$", re.M)
+        m = pat.search(self.sh)
+        self.assertIsNotNone(m, f"no top-level verb {name}")
+        rest = self.sh[m.end():]
+        nxt = re.search(r"^ {0,2}[a-z|]+\)\s*$", rest, re.M)
+        return rest[:nxt.start()] if nxt else rest
+
+    def _hud_block(self):
+        return self._verb_block("hud")
+
+    def test_hudpkg_distinguishes_absent_from_unknown(self):
+        # `pm` missing from PATH is not the same as the package being gone.
+        # Conflating them turns a broken environment into a confident lie.
+        block = self._verb_block("hudpkg")
+        self.assertIn("pm path com.lcs.hud", block)
+        self.assertIn("echo installed", block)
+        self.assertIn("echo absent", block)
+        self.assertIn("echo unknown", block)
+        self.assertIn("command -v pm", block)
+
+    def test_writes_are_refused_when_the_panel_is_dead(self):
+        # The bug: the write "succeeds" into a directory nobody polls.
+        block = self._hud_block()
+        self.assertIn("panel=dead", block)
+        self.assertIn("exit 1", block)
+
+    def _refusal_guard(self):
+        # The hud block has three `case "$sub" in` statements: one decides
+        # which verbs may wake the panel, one decides which writes are refused,
+        # one dispatches the verb. The refusal guard is the one that mentions
+        # panel=dead, so locate it by that marker instead of by position --
+        # position-based slicing silently grabbed the wrong case and made a
+        # passing test mean nothing.
+        block = self._hud_block()
+        i = block.index("panel=dead")
+        start = block.rindex('case "$sub" in', 0, i)
+        return block[start:block.index("esac", i)]
+
+    def test_status_still_runs_when_the_panel_is_dead(self):
+        # Refusing every verb would remove the only way to find out why.
+        self.assertNotIn("status)", self._refusal_guard())
+
+    def test_pause_is_never_refused(self):
+        # The host gate reads hud.ctl through this same verb. If a dead panel
+        # made `pause` fail, the human would lose the off switch exactly when
+        # the panel is broken.
+        guard = self._refusal_guard()
+        self.assertNotIn("pause)", guard)
+        self.assertNotIn("run)", guard)
+        self.assertIn("say|beat|publish", guard)
+
+    def test_status_prints_liveness_before_the_path(self):
+        # dir= looked right while the panel was dead. panel= must come first.
+        block = self.sh.split("status)", 1)[1].split(";;", 1)[0]
+        self.assertLess(block.index('echo "panel=$panel'),
+                        block.index('echo "dir=$D"'))
+
+    def test_only_writes_may_wake_the_panel(self):
+        # `status` runs before every action; it must not spawn an app or wait
+        # three seconds for one that will not start. Only the verbs whose
+        # output a live panel actually consumes are allowed to start it.
+        block = self._hud_block()
+        i = block.index('case "$sub" in')
+        wake_case = block[i:block.index("esac", i)]
+        self.assertIn("say|beat|publish", wake_case)
+        # The dispatch case must not be the thing that starts the app.
+        self.assertNotIn("status)", wake_case)
+        after = block[block.index("esac", i):block.index("pkg=${pkg", i)]
+        self.assertIn('if [ -z "$P" ]', after)
+        self.assertIn("am start", after)
+
+    def test_host_say_reports_a_stale_card_instead_of_nothing(self):
+        # hud_say used to return quietly whenever the transport worked but the
+        # verb said nothing -- the exact shape of "wrote fine, nothing renders".
+        m = re.search(r"^def hud_say\(.*?(?=^def |\Z)", self.py, re.S | re.M)
+        self.assertIsNotNone(m)
+        body = m.group(0)
+        self.assertIn("eyes.sh hud on", body)
+        self.assertIn("stale", body)
+
+    def test_gate_survives_a_failed_pause_notice(self):
+        # hud_publish goes through sh(), which raises SystemExit. Since v1.4.1
+        # eyes.sh also refuses to publish into a dead panel, so the pause path
+        # must not turn a delivered refusal into a traceback.
+        m = re.search(r"^def gate\(.*?(?=^def |\Z)", self.py, re.S | re.M)
+        self.assertIsNotNone(m)
+        self.assertIn("except (Exception, SystemExit)", m.group(0))
+
+
 class HudPublish(unittest.TestCase):
     """Publishing prose into the panel dir must not depend on quoting."""
 
@@ -265,7 +378,14 @@ class HudPublish(unittest.TestCase):
                           encoding="utf-8").read()
 
     def _sh_block(self, name):
-        return self.sh.split(f"{name})", 1)[1].split(";;", 1)[0]
+        # Anchor on a whole-line verb label ("      publish)"), not on a bare
+        # substring: v1.4.1 added `say|beat|publish)` to the wake-up case, and
+        # a bare "publish)" then matched there instead, so these tests were
+        # asserting things about the wrong lines while still passing.
+        pat = re.compile(r"^\s+" + re.escape(name) + r"\)\s*$", re.M)
+        m = pat.search(self.sh)
+        self.assertIsNotNone(m, f"no verb label for {name}")
+        return self.sh[m.end():self.sh.index(";;", m.end())]
 
     def test_publish_takes_the_body_from_a_file(self):
         # The destination is reachable only via `nsenter ... sh -c "..."`, so
