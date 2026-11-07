@@ -262,6 +262,21 @@ for several taps before re-dumping.
   `mResumedActivity` is often absent.
 - **`screenrecord` dies with its parent shell.** If you must use it, `setsid`
   and a pidfile, and expect orphans.
+- **The panel's directory is not `/sdcard/lcs`, and you cannot guess it.**
+  The emulated filesystem forces `/sdcard` subdirs to `drwxrws---` owned by
+  `media_rw`, so an app cannot traverse them and `chmod` silently does nothing;
+  `/sdcard/Android/data/<pkg>` can be written by the app but not created from
+  outside; and `/data/user/0/<pkg>` is correct yet invisible from a shell,
+  because Android 11 gives every app its own mount namespace. Ask the device:
+  `eyes.sh huddir` borrows the panel's namespace and prints the live path.
+- **Copying a file from `/sdcard` into an app's directory keeps `0640`.**
+  `cp` preserves the mode the emulated filesystem handed out, so the file ends
+  up correct on disk and unreadable by the app: the panel renders an empty card.
+  Use `cat > dst` plus an explicit `chmod 0644`.
+- **`phone say` inside a proot Ubuntu dies on `/system/bin/sh`.** proot has no
+  `/system`, so `PHONE_EXEC` cannot start and Python reports a missing binary
+  rather than a missing shell. Set `PHONE_EMIT=1` and run the printed
+  `DEVICE_CMD`, or drive the phone from a shell that has `/system/bin`.
 
 ## License
 

@@ -4,6 +4,13 @@
 # Runs as root via adb shell / KernelSU / Magisk. No dependencies beyond what
 # every Android build ships: screencap, uiautomator, input, dumpsys.
 #
+# PATH: `su -c 'sh eyes.sh tap 1 1'` starts a login-less shell whose PATH can
+# be as thin as /sbin, so `input` resolves to nothing and the tap "fails" with
+# `input: not found` even though root was granted. Pin the platform paths up
+# front; appending (not replacing) keeps a caller's own tools reachable.
+PATH=${PATH}:/system/bin:/system/xbin:/vendor/bin:/sbin
+export PATH
+#
 # DESIGN: one command, one process, exit. Nothing is left running. An agent
 # that drives this in a loop costs ~0.5 s per observation and nothing at all
 # between observations. There is no daemon, no screenrecord, no ffmpeg.
@@ -37,12 +44,19 @@
 #   eyes.sh text "hello world"
 #   eyes.sh size                screen geometry + density
 #   eyes.sh observe [dir]       shot + dump + top in one call
+#   eyes.sh huddir              where the floating panel reads its files
+#   eyes.sh hud pause|run|status|on|off
+
 #
 # All paths default under $OUT. Coordinates are physical pixels; run
 # `eyes.sh size` first and scale your model's view accordingly.
 
 set -u
 OUT=${OUT:-/sdcard/lcs}
+# Where the floating panel used to be told to look, and where it is still told
+# to look when it is not installed. See `huddir` for why the live path is
+# elsewhere and why it is not a constant.
+REMOTE_DIR_FALLBACK=${HUD_FALLBACK_DIR:-/sdcard/lcs}
 
 # Some callers (su -c from a proot container, minimal root shells) hand us a
 # PATH without /system/bin, and then `wm`/`input`/`screencap` look missing.
@@ -59,6 +73,9 @@ case "$cmd" in
     p=${1:-$OUT/shot.png}
     mkdir -p "$(dirname "$p")" 2>/dev/null
     screencap -p "$p" || exit 1
+    # Same reason as dump: screencap writes 0660 root:media_rw, and the caller
+    # may not be root.
+    chmod 0644 "$p" 2>/dev/null
     echo "$p $(wc -c < "$p" 2>/dev/null || echo 0)"
     ;;
 
@@ -68,6 +85,11 @@ case "$cmd" in
     # --compressed drops the empty layout nodes; 33 KB vs 47 KB, same tree.
     uiautomator dump --compressed "$p" >/dev/null 2>&1
     [ -f "$p" ] || { echo "dump failed" >&2; exit 1; }
+    # uiautomator writes as u0_a0:media_rw 0660. On /sdcard that is unreadable
+    # to the app uid running this script (Termux is u0_a348), so the caller
+    # sees "cannot read ui.xml" even though the dump succeeded. Widening to
+    # 0644 is what makes the artifact readable by whoever asked for it.
+    chmod 0644 "$p" 2>/dev/null
     echo "$p $(wc -c < "$p")"
     ;;
 
@@ -80,35 +102,122 @@ case "$cmd" in
 
   tap)
     [ $# -ge 2 ] || { echo "tap needs X Y" >&2; exit 2; }
-    input tap "$1" "$2"
+    # `input tap` exits 0 for coordinates outside the panel and simply drops
+    # the event, so rc alone proves nothing. Reject off-screen points up front
+    # (that is the common agent error: a coordinate read from a stale tree).
+    # `wm size` prints "Physical size: WxH" and, when overridden, an additional
+    # "Override size: WxH" -- the override is what input actually uses, so take
+    # the last match rather than the first.
+    geo=$(wm size 2>/dev/null | sed -n 's/.*: *\([0-9][0-9]*\)x\([0-9][0-9]*\).*/\1 \2/p' | tail -1)
+    sw=${geo% *}
+    sh_=${geo#* }
+    if [ -n "$sw" ] && [ -n "$sh_" ] && [ "$sw" != "$geo" ]; then
+      if [ "$1" -ge "$sw" ] || [ "$2" -ge "$sh_" ] || [ "$1" -lt 0 ] || [ "$2" -lt 0 ]; then
+        echo "tap $1 $2 is outside the ${sw}x${sh_} panel; the event would be dropped silently" >&2
+        exit 2
+      fi
+    fi
+    input tap "$1" "$2" || { echo "tap $1 $2 failed" >&2; exit 1; }
     echo "tap $1 $2"
     ;;
 
   long)
     [ $# -ge 2 ] || { echo "long needs X Y [MS]" >&2; exit 2; }
     # input has no long-press verb; swipe in place is the documented idiom.
-    input swipe "$1" "$2" "$1" "$2" "${3:-600}"
+    input swipe "$1" "$2" "$1" "$2" "${3:-600}" \
+      || { echo "long $1 $2 failed" >&2; exit 1; }
     echo "long $1 $2 ${3:-600}"
     ;;
 
   swipe)
     [ $# -ge 4 ] || { echo "swipe needs X1 Y1 X2 Y2 [MS]" >&2; exit 2; }
-    input swipe "$1" "$2" "$3" "$4" "${5:-300}"
+    input swipe "$1" "$2" "$3" "$4" "${5:-300}" \
+      || { echo "swipe $1 $2 $3 $4 failed" >&2; exit 1; }
     echo "swipe $1 $2 $3 $4 ${5:-300}"
     ;;
 
   key)
+    # `input keyevent home` exits 0 and does nothing. The name must be a real
+    # KEYCODE, and rc=0 from `input` is not evidence that anything moved -- so
+    # map the short names people actually type, and verify the effect instead
+    # of echoing the argument back as if it had worked.
     [ -n "${1:-}" ] || { echo "key needs a KEYCODE name" >&2; exit 2; }
-    input keyevent "$1"
-    echo "key $1"
+    kc=$1
+    case "$kc" in
+      [0-9]*) ;;                      # already numeric
+      KEYCODE_*) ;;
+      back|BACK)       kc=KEYCODE_BACK ;;
+      home|HOME)       kc=KEYCODE_HOME ;;
+      enter|ENTER|return|RETURN) kc=KEYCODE_ENTER ;;
+      recents|RECENTS|appswitch|APP_SWITCH) kc=KEYCODE_APP_SWITCH ;;
+      menu|MENU)       kc=KEYCODE_MENU ;;
+      power|POWER)     kc=KEYCODE_POWER ;;
+      volume_up|VOLUME_UP)     kc=KEYCODE_VOLUME_UP ;;
+      volume_down|VOLUME_DOWN) kc=KEYCODE_VOLUME_DOWN ;;
+      delete|DEL|backspace|BACKSPACE) kc=KEYCODE_DEL ;;
+      tab|TAB)         kc=KEYCODE_TAB ;;
+      space|SPACE)     kc=KEYCODE_SPACE ;;
+      escape|ESC|ESCAPE) kc=KEYCODE_ESCAPE ;;
+      *) echo "unknown key '$1'; pass a KEYCODE_* name or one of: back home enter recents menu power volume_up volume_down delete tab space escape" >&2
+         exit 2 ;;
+    esac
+
+    before=$(dumpsys activity activities 2>/dev/null \
+             | grep -m1 'topResumedActivity' | sed 's/.*u0 //;s/ .*//')
+    input keyevent "$kc" 2>/dev/null
+    sleep 0.4
+    after=$(dumpsys activity activities 2>/dev/null \
+            | grep -m1 'topResumedActivity' | sed 's/.*u0 //;s/ .*//')
+
+    # A key that changes the foreground app proves itself. One that does not
+    # (enter, tab, delete, volume) is still valid -- so the claim is scoped to
+    # what was actually observed, not upgraded to "it worked".
+    if [ "$before" != "$after" ]; then
+      echo "key $kc -> $after"
+    else
+      echo "key $kc (foreground unchanged: ${after:-unknown})"
+    fi
     ;;
 
   text)
     [ -n "${1:-}" ] || { echo "text needs a string" >&2; exit 2; }
+    # `input text` only speaks ASCII. Feeding it CJK fails with rc=255 and
+    # types nothing -- and the old code echoed success anyway. Detect it and
+    # fail loudly with the working alternative instead of typing air.
+    if printf '%s' "$1" | LC_ALL=C grep -q '[^ -~]'; then
+      echo "text: '$1' contains non-ASCII, which 'input text' cannot send (rc=255, nothing typed)." >&2
+      echo "text: use the IME path instead -- eyes.sh ime-text '...'" >&2
+      exit 2
+    fi
     # input text eats spaces unless escaped; %s is the accepted form.
     s=$(printf '%s' "$1" | sed 's/ /%s/g')
-    input text "$s"
+    input text "$s" || { echo "text '$1' failed" >&2; exit 1; }
     echo "text $1"
+    ;;
+
+  ime-text)
+    # Non-ASCII entry that actually works: broadcast the string to the ADB
+    # keyboard IME (com.android.adbkeyboard), which commits it as real text
+    # rather than as key events. Requires that IME to be installed and active;
+    # we check instead of pretending, because a silent no-op here looks exactly
+    # like a successful type.
+    [ -n "${1:-}" ] || { echo "ime-text needs a string" >&2; exit 2; }
+    if ! pm list packages 2>/dev/null | grep -q 'com.android.adbkeyboard'; then
+      echo "ime-text: ADBKeyboard (com.android.adbkeyboard) is not installed." >&2
+      echo "ime-text: install it, then: ime set com.android.adbkeyboard/.AdbIME" >&2
+      exit 3
+    fi
+    cur=$(settings get secure default_input_method 2>/dev/null)
+    case "$cur" in
+      *adbkeyboard*) ;;
+      *) echo "ime-text: ADBKeyboard is installed but not the active IME (current: $cur)." >&2
+         echo "ime-text: run: ime set com.android.adbkeyboard/.AdbIME" >&2
+         exit 3 ;;
+    esac
+    b64=$(printf '%s' "$1" | base64 | tr -d '\n')
+    am broadcast -a ADB_INPUT_B64 --es msg "$b64" >/dev/null 2>&1 \
+      || { echo "ime-text broadcast failed" >&2; exit 1; }
+    echo "ime-text $1"
     ;;
 
   size)
@@ -204,6 +313,173 @@ case "$cmd" in
     echo "top $(cat "$d/top.txt")"
     # /proc/uptime is seconds with 2 decimals; bash arithmetic needs ints
     echo "elapsed $(( ${t1%.*} - ${t0%.*} ))s"
+    ;;
+
+  huddir)
+    # Where the floating panel actually looks. Print it; callers write there.
+    #
+    # This is not a constant, and the obvious guesses are all wrong:
+    #   /sdcard/lcs              -- FUSE forces its mode to drwxrws--- owned by
+    #                               the media uid, so the panel (a normal app
+    #                               uid) cannot traverse it. chmod does not
+    #                               stick; the emulated filesystem owns modes.
+    #   /sdcard/Android/data/... -- the panel may write its own external dir,
+    #                               but nothing outside that uid can create it,
+    #                               and root is denied by the FUSE daemon.
+    #   /data/user/0/com.lcs.hud -- correct, but invisible from a shell: from
+    #                               Android 11 each app gets its own mount
+    #                               namespace, so even root sees only its own
+    #                               /data/user/0/<pkg>. We borrow the panel's
+    #                               namespace with nsenter on its pid.
+    # Falls back to the legacy path only when the panel is not running, which
+    # is also the only case where nobody is polling and a lost write is free.
+    d=/data/user/0/com.lcs.hud/files/hud
+    p=$(pidof com.lcs.hud)
+    if [ -n "$p" ] && nsenter -t "$p" -m -- test -d "$d" 2>/dev/null; then
+      echo "$d"
+    else
+      echo "$REMOTE_DIR_FALLBACK"
+    fi
+    ;;
+
+hud)
+    # Control + status plumbing for the floating panel (com.lcs.hud).
+    #
+    # The panel polls hud.ctl and hud.status inside its own private directory;
+    # see `huddir` above for why that path is not a constant.
+    #
+    # The old /sdcard/lcs locations are kept working as a fallback for a phone
+    # whose panel was never installed. Both are
+    # plain files on purpose: the host side stays one-process-per-command, and
+    # nothing has to stay resident for the panel to work.
+    #
+    # `hud pause|run` is the fallback for a phone where the app is not
+    # installed: the agent honours the same file, so a human can still stop it
+    # from a shell. `hud status` prints what the agent last published.
+    sub=${1:-status}
+    D=$(sh "$0" huddir)
+    # Writing into the panel's namespace is the whole trick: the path exists
+    # only inside that pid's mount namespace, so every read and write below is
+    # wrapped in nsenter. When the panel is not running, D is the legacy
+    # /sdcard/lcs path and nsenter is skipped.
+    P=$(pidof com.lcs.hud)
+    hw() {  # hud write: hw <file> <body>
+      if [ -n "$P" ]; then
+        nsenter -t "$P" -m -- sh -c "printf '%s' '$2' > '$D/$1.tmp' && mv -f '$D/$1.tmp' '$D/$1'"
+      else
+        printf '%s' "$2" > "$D/$1.tmp" && mv -f "$D/$1.tmp" "$D/$1"
+      fi
+    }
+    hr() {  # hud read: hr <file>
+      if [ -n "$P" ]; then
+        nsenter -t "$P" -m -- cat "$D/$1" 2>/dev/null
+      else
+        cat "$D/$1" 2>/dev/null
+      fi
+    }
+    case "$sub" in
+      pause)
+        hw hud.ctl 'pause
+' || { echo "hud pause: cannot write $D/hud.ctl" >&2; exit 1; }
+        echo "hud: paused (agent will refuse to act until 'hud run')"
+        ;;
+      run)
+        hw hud.ctl 'run
+' || { echo "hud run: cannot write $D/hud.ctl" >&2; exit 1; }
+        echo "hud: running"
+        ;;
+      status)
+        echo "dir=$D"
+        echo "ctl=$(hr hud.ctl || echo missing)"
+        hr hud.status || echo "status=missing"
+        # Show both clocks: "said" is when the agent last published intent,
+        # "did" is when it last acted. A card that only knows the first looks
+        # dead while the agent is working.
+        echo "beat=$(hr hud.beat | tr '\n' ' ' || echo missing)"
+        ;;
+      say)
+        # `hud say <task> [think] [step] [state]` -- one device-side command
+        # that publishes a whole status card.
+        #
+        # This exists because the caller with the phone in its hand (an agent
+        # whose only channel is a root shell) cannot usefully do the two-step
+        # dance: write a staging file, then publish it. Each of those is a
+        # separate round trip and a separate chance to get the quoting wrong.
+        # Arguments arrive as argv here, so Chinese text and punctuation cost
+        # nothing -- no escaping layer between the prose and the file.
+        task=${2:-}
+        think=${3:-}
+        step=${4:-}
+        state=${5:-running}
+        [ -n "$task" ] || { echo "hud say: task is required" >&2; exit 2; }
+        {
+          printf 'ts=%s\n' "$(date +%s%3N)"
+          printf 'state=%s\n' "$state"
+          printf 'task=%s\n' "$task"
+          printf 'think=%s\n' "$think"
+          printf 'step=%s\n' "$step"
+        } > "$OUT/hud.status.out" || exit 1
+        sh "$0" hud publish hud.status >/dev/null || exit 1
+        {
+          printf 'ts=%s\n' "$(date +%s%3N)"
+          printf 'act=say\n'
+        } > "$OUT/hud.beat.out" || exit 1
+        sh "$0" hud publish hud.beat >/dev/null || exit 1
+        echo "hud: $state | $task"
+        ;;
+      beat)
+        # `hud beat [what]` -- liveness only, for a long think between actions.
+        what=${2:-thinking}
+        {
+          printf 'ts=%s\n' "$(date +%s%3N)"
+          printf 'act=%s\n' "$what"
+        } > "$OUT/hud.beat.out" || exit 1
+        sh "$0" hud publish hud.beat >/dev/null || exit 1
+        echo "beat: $what"
+        ;;
+      publish)
+        # `hud publish <name>` moves $OUT/<name>.out into the panel directory.
+        #
+        # The body travels through a file, never through a command string. The
+        # panel dir is reachable only via `nsenter ... sh -c "..."`, so an
+        # inline body would need three levels of quoting (host -> device shell
+        # -> nsenter -> sh) and one unescaped quote in an agent's prose would
+        # silently truncate the status. A file has no quoting rules at all.
+        name=${2:?hud publish: missing name}
+        src="$OUT/$name.out"
+        [ -f "$src" ] || { echo "hud publish: no $src" >&2; exit 1; }
+        # Copy through cat, not cp, and force mode 0644.
+        #
+        # The staging file lives on /sdcard, where the emulated filesystem
+        # hands out 0640 owned by whoever wrote it. `cp` preserves that, and a
+        # root-owned 0640 file in the panel's own directory is one the panel
+        # (uid u0_a350) cannot open: it renders an empty card while the file
+        # on disk is perfectly correct. That failure looks like "the panel is
+        # dead", so the mode is set explicitly rather than inherited.
+        if [ -n "$P" ]; then
+          nsenter -t "$P" -m -- sh -c "cat '$src' > '$D/$name.tmp' && chmod 0644 '$D/$name.tmp' && mv -f '$D/$name.tmp' '$D/$name'" \
+            || { echo "hud publish: cannot write $D/$name" >&2; exit 1; }
+        else
+          cat "$src" > "$D/$name.tmp" && chmod 0644 "$D/$name.tmp" && mv -f "$D/$name.tmp" "$D/$name" \
+            || { echo "hud publish: cannot write $D/$name" >&2; exit 1; }
+        fi
+        rm -f "$src"
+        echo "hud: published $name to $D"
+        ;;
+      on|off)
+        # Whether the panel service is alive, and if not, why.
+        if pidof com.lcs.hud >/dev/null 2>&1; then
+          echo "hud: running (pid $(pidof com.lcs.hud))"
+        else
+          echo "hud: not running"
+          echo "hud: start with: am start-foreground-service -n com.lcs.hud/.HudService"
+        fi
+        ;;
+      *)
+        echo "hud: unknown sub '$sub'; use pause|run|status|on|off" >&2
+        exit 2
+        ;;
+    esac
     ;;
 
   *)

@@ -1,5 +1,59 @@
 # Changelog
 
+## v1.4.0 — the panel actually talks
+
+The floating status panel (`android/hud`) worked and showed nothing. Two
+independent bugs, both of which made a healthy panel look dead, and neither of
+which produced an error anywhere the caller could see.
+
+**Fixed — the panel's directory was guessed, and every guess was wrong**
+- `/sdcard/lcs` (the old hardcoded path) is unusable: the emulated filesystem
+  forces `drwxrws---` owned by `media_rw`, so a normal app uid cannot traverse
+  it. `chmod` reports success and changes nothing, which is why this looked
+  like a permissions problem for hours.
+- `/sdcard/Android/data/<pkg>` is writable by the app itself but cannot be
+  *created* from outside its uid, and root gets EPERM from the FUSE daemon.
+- `/data/user/0/com.lcs.hud` is correct, and invisible from a shell: Android 11
+  gives every app its own mount namespace, so even root sees only its own
+  package under `/data/user/0`.
+- Added `eyes.sh huddir`, which resolves the live path by borrowing the panel's
+  namespace (`nsenter -t $(pidof com.lcs.hud) -m`) and falls back to the legacy
+  path when the panel is not installed. `hud status` now prints `dir=` so a
+  wrong path is visible instead of silent.
+
+**Fixed — publishing prose through three levels of quoting**
+- The status body used to travel as an inline shell string
+  (host → device shell → `nsenter` → `sh -c`). One apostrophe in Chinese prose
+  truncated the card mid-sentence with no error.
+- Added `eyes.sh hud publish <name>`, which copies a staging file from `$OUT`
+  into the panel dir with `cat` + `chmod 0644` + atomic rename.
+- Added `eyes.sh hud say <task> [think] [step] [state]`, which builds the whole
+  card from argv — no escaping layer at all. `phone say` now delegates to it.
+- The `chmod` is not decoration: `/sdcard` hands out `0640` owned by the
+  writer, `cp` preserves that, and a root-owned `0640` file inside the panel's
+  own directory is one the panel cannot open. Correct on disk, empty card on
+  screen. Measured, then fixed.
+
+**Fixed — a failed heartbeat could abort a successful action**
+- `hud_beat` caught `Exception`, but `sh()` raises `SystemExit` (a
+  `BaseException`). A device hiccup while writing the heartbeat escaped and
+  failed the tap that had already landed. Now caught explicitly.
+
+**Added — `phone say` says so when the transport is missing**
+- Inside a proot container there is no `/system/bin/sh`, so `PHONE_EXEC` cannot
+  start and Python raised a bare `FileNotFoundError` about a binary, which
+  reads as "the panel is broken". `sh_probe()` turns that into a diagnosable
+  message naming `PHONE_TRANSPORT` / `PHONE_EXEC` and pointing at `PHONE_EMIT=1`.
+
+**Tests — 91 → 100**
+- `PanelPath`: the path is resolved on the device, through the panel's pid,
+  with a fallback, and reported.
+- `HudPublish`: the body comes from a file, the mode is forced, `say` builds
+  from argv, and the host delegates instead of rebuilding.
+- `test_beat_file_is_polled` was asserting a `String BEAT` constant that had
+  already been refactored into `beatPath()`. It had been red for a while, which
+  is how a real regression later gets waved through.
+
 ## v1.3.0 — observe less, see more
 
 Four changes, all in service of one number: how much a single look costs.

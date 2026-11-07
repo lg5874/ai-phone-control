@@ -10,3 +10,6 @@ build/
 dist/
 *.egg-info/
 .DS_Store
+# The panel ships a debug keystore generated on first build; it is a
+# signing key, not source. android/hud/build.sh regenerates it.
+android/hud/debug.keystore
