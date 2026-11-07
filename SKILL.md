@@ -72,6 +72,40 @@ physical pixels of the real screen — pass them straight back to `tap`.
 | screen geometry | `./phone size` |
 | deploy the device half | `./phone install` |
 
+## Talking to the floating panel
+
+If `com.lcs.hud` is installed, the phone shows a small card with what you are
+doing. Publishing to it is optional but cheap, and it is the difference between
+a human who can see you are thinking and one who thinks the run died.
+
+```sh
+./phone say "在小红书搜索并安装" \
+            --think "当前界面是搜索框，先点输入框" \
+            --step  "第 2/5 步 · 点击搜索框" --state running
+```
+
+Every action also emits a heartbeat on its own, so the card's liveness dot stays
+green while you work. `--state done` / `--state error` change the dot: a
+finished run must not keep a green light, and a failed one must not look slow.
+
+Two things about this are not obvious, and both cost a day to find:
+
+- **The card's directory cannot be guessed.** It lives inside the panel's own
+  private storage, which is visible only through that process's mount
+  namespace. `eyes.sh huddir` resolves it (borrowing the namespace via
+  `nsenter -t $(pidof com.lcs.hud) -m`); `hud status` prints `dir=` so you can
+  see where it actually wrote. `/sdcard/lcs` is the legacy fallback and is
+  **not** where a running panel looks.
+- **Never pass prose as an inline shell string to reach it.** The path needs
+  three levels of quoting (host → device shell → `nsenter` → `sh -c`), and one
+  apostrophe in Chinese truncates the card with no error. Use
+  `./phone say` (which delegates to `eyes.sh hud say`, argv, no escaping) or
+  `eyes.sh hud publish <name>` with a staging file.
+
+If the panel shows "AI 已 15s 无更新" while you are working, the heartbeat is not
+reaching it — check `eyes.sh hud status` first, and check `dir=` against the
+directory the panel logs at `adb logcat -s LCSHUD`.
+
 ## Exit codes
 
 | code | meaning |
